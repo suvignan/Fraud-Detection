@@ -697,8 +697,8 @@ train_final["category"] = train_final["category"].astype("category")
 test_final["category"] = pd.Categorical(test_final["category"],
                                         categories=train_final["category"].cat.categories)
 
-train_final.to_parquet("../data/processed/train.parquet", index=False)
-test_final.to_parquet("../data/processed/test.parquet", index=False)
+train_final.to_parquet("../data/interim/features_train.parquet", index=False)
+test_final.to_parquet("../data/interim/features_test.parquet", index=False)
 ```
 
 **Why Parquet:** it keeps column types (dates stay dates) and is much smaller and faster than CSV.
@@ -711,3 +711,62 @@ test_final.to_parquet("../data/processed/test.parquet", index=False)
 **Checks:** both files have 13 columns with the same names. Reloading gives the same rows and fraud rates (0.579%, 0.386%). Dates stay datetime, and category stays category.
 
 **Remember:** *Features teach, helpers explain, the target is the answer.*
+
+---
+
+## Step 4: Split by time (`notebooks/03_split.ipynb`)
+
+**The idea (like studying for an exam):**
+- **Train** = practice questions. The model learns from these.
+- **Validation** = a mock exam. Compare models and choose settings, as often as you like.
+- **Test** = the final exam. Look **once**, at the very end. Checking it while making choices is secretly studying for the final, and the score stops being honest.
+
+**Why cut from the end, not random rows:** in real life the model always predicts the future from the past. Random rows would leak future days into training.
+
+```
+|<------ TRAIN (Jan 2019 – 20 Mar 2020) ------>|<-- VALIDATION (21 Mar – 21 Jun 2020) -->|<-- TEST (21 Jun – 31 Dec 2020) -->|
+```
+
+**Code:**
+```python
+train = pd.read_parquet("../data/interim/features_train.parquet")
+test = pd.read_parquet("../data/interim/features_test.parquet")
+
+train = train.sort_values("trans_date_trans_time").reset_index(drop=True)
+cut_date = pd.to_datetime("2020-03-21 00:00:00")
+
+new_train = train[train["trans_date_trans_time"] < cut_date].copy()     # strictly before
+validation = train[train["trans_date_trans_time"] >= cut_date].copy()   # on or after
+```
+
+**Result:**
+
+| Set | Start | End | Rows | Fraud rate |
+|---|---|---|---|---|
+| Train | 2019-01-01 00:00:18 | 2020-03-20 23:58:44 | 1,070,966 | 0.584% |
+| Validation | 2020-03-21 00:00:20 | 2020-06-21 12:13:37 | 225,709 | 0.556% |
+| Test | 2020-06-21 12:14:25 | 2020-12-31 23:59:34 | 555,719 | 0.386% |
+
+**Checks:** 1,070,966 + 225,709 = 1,296,675, with no overlap. Use `<` for one set and `>=` for the other, so no row is lost or doubled.
+
+**What it means:** validation looks like train (0.584% vs 0.556%), but test is lower (0.386%). So validation won't fully warn us about the future. A threshold tuned on validation may over-flag on test, which is prior shift again.
+
+**No need to recompute features:** they only looked at each card's past, so they're still correct.
+
+**Saving the split (so every step uses the same sets):**
+```python
+new_train.to_parquet("../data/processed/train.parquet", index=False)
+validation.to_parquet("../data/processed/val.parquet", index=False)
+test.to_parquet("../data/processed/test.parquet", index=False)
+```
+- **Why save it:** if every notebook redoes the cut, one small mistake (a different date, a forgotten sort) quietly gives different sets, and results stop being comparable. Real pipelines have a "split" step that writes files, and the next step reads them.
+- **The cut date `2020-03-21`** is written in a markdown cell. Later it moves to `params.yaml`, so it's never hidden in code.
+- **The trap avoided:** the split reads `features_train.parquet` and writes `train.parquet`. If it read and wrote the same file, a second run would cut an already-cut file and validation would be empty. **Never overwrite your own input.**
+
+**Data flow:**
+```
+data/raw/*.csv  -> 02_features ->  data/interim/features_{train,test}.parquet
+                -> 03_split    ->  data/processed/{train,val,test}.parquet
+```
+
+**Remember:** *Practise on the past, mock exam on the recent past, final exam once.*

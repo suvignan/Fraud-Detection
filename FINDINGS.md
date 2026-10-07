@@ -8,7 +8,7 @@ One place for everything we found so far. For each finding:
 Data: `fraudTrain.csv` (Jan 2019 – Jun 2020) and `fraudTest.csv` (Jun – Dec 2020).
 Learning details and code are in [LEARNING_NOTES.md](LEARNING_NOTES.md).
 
-**Status:** Step 1 ✅ · Step 2 ✅ · Step 3a ✅ · Step 3b ✅ · Step 3c ✅ · Step 3d ✅ · Step 3e ✅ · **Step 3 done** · Step 3d ⬜ · Step 3e ⬜
+**Status:** Step 1 ✅ · Step 2 ✅ · Step 3a ✅ · Step 3b ✅ · Step 3c ✅ · Step 3d ✅ · Step 3e ✅ · Step 4 ✅ · Step 3d ⬜ · Step 3e ⬜
 
 ---
 
@@ -65,8 +65,18 @@ Learning details and code are in [LEARNING_NOTES.md](LEARNING_NOTES.md).
 | 32 | Should `gender` be used? | It's a group (2 values), not a nametag. | Dropped as a **protected attribute**: using it in fraud decisions is a fairness and legal risk for a bank. |
 | 33 | Which text column is kept? | `category`: 14 values, describes the purchase, 11.3× risk spread. | Kept. It gets converted to numbers in the next step. |
 
-| 34 | What goes into the final files? | 9 features: `amt`, `category`, `hour`, `age`, `secs_since_last`, `is_first_txn`, `card_avg_amt_before`, `amt_ratio`, `txn_count_24h`. Target: `is_fraud`. Helpers: `trans_date_trans_time` (time split), `cc_num` (trace to a card), `gender` (fairness checks only). | 13 columns in both files. Saved to `data/processed/train.parquet` and `test.parquet`. |
+| 34 | What goes into the final files? | 9 features: `amt`, `category`, `hour`, `age`, `secs_since_last`, `is_first_txn`, `card_avg_amt_before`, `amt_ratio`, `txn_count_24h`. Target: `is_fraud`. Helpers: `trans_date_trans_time` (time split), `cc_num` (trace to a card), `gender` (fairness checks only). | 13 columns in both files. Saved to `data/interim/features_train.parquet` and `features_test.parquet`. |
 | 35 | Is Parquet worth it? | Train 351.2 MB CSV → 41.5 MB Parquet. Test 150.4 MB → 17.7 MB. Both 8.5× smaller. Dates stay dates and category stays category after reloading. | All later steps read Parquet. Note: rows are sorted by card, then time, so Step 4 must sort by time before splitting. |
+
+---
+
+## Step 4: Split by time
+
+| # | Why we checked | What we found | How we use it |
+|---|---|---|---|
+| 36 | We need a "mock exam" set that's honest about the future | The train file was cut at 2020-03-21. Train: 2019-01-01 → 2020-03-20, 1,070,966 rows, 0.584% fraud. Validation: 2020-03-21 → 2020-06-21, 225,709 rows, 0.556%. Test: 2020-06-21 → 2020-12-31, 555,719 rows, 0.386%. The rows add up, and there's no overlap. | Train = learn, validation = compare models and tune, test = look **once** at the end. Cut by time, never randomly, because the model always predicts the future. |
+| 37 | Do the three sets have the same fraud rate? | Train and validation are close (0.584% vs 0.556%), but test is much lower (0.386%). | Validation won't fully warn us about test's lower rate, so a threshold picked on validation may over-flag on test. This is prior shift: monitor the threshold after deployment. |
+| 38 | How do later steps get the same sets every time? | Redoing the cut in every notebook risks a different date or a forgotten sort, which quietly gives different sets. | Saved once: `data/processed/train.parquet` (1,070,966), `val.parquet` (225,709), `test.parquet` (555,719). Every later step reads these. The cut date `2020-03-21` is written in a markdown cell, and later moves to `params.yaml`. The Step 3 output lives in `data/interim/features_*.parquet`, so the split never overwrites its own input. |
 
 **Column count check (keep these exact):** 23 raw → 19 after 3a → 20 with `distance_km` → 17 after dropping the 3 distance columns → 19 with `secs_since_last` and `is_first_txn` → 21 with `card_avg_amt_before` and `amt_ratio` → 22 with `txn_count_24h` (+ the `dataset` helper = 23) → **final file: 13 columns** (9 features + 1 target + 3 helpers).
 
