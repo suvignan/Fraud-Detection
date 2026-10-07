@@ -485,4 +485,229 @@ plt.legend(); plt.show()
 | `hour` or "is night" (10pm–4am) | Night is 2.5–5× riskier | Strong |
 | `age` | 75+ and under 25 are riskier | Medium |
 | Card history (count and amount in the last 24 hours) | Fraud = "test small, then spend big" | To check (sort by time first!) |
-| Distance to merchant | Locations are random | **None, skip it** |
+| Distance to merchant | Locations are random | **None, dropped in Step 3b** |
+
+---
+
+## Step 3: Building features (`notebooks/02_features.ipynb`)
+
+### 3a. Remove useless columns, add age and hour
+
+**The idea:** a column stays only if (1) it says something about fraud **and** (2) it will exist when a new transaction arrives.
+
+**Code:**
+```python
+df['dob'] = pd.to_datetime(df['dob'])
+df['trans_date_trans_time'] = pd.to_datetime(df['trans_date_trans_time'])
+
+df['age'] = np.floor((df['trans_date_trans_time'] - df['dob']).dt.days / 365.25).astype(int)
+df['hour'] = df['trans_date_trans_time'].dt.hour
+
+columns_to_drop = ['Unnamed: 0', 'unix_time', 'trans_num', 'first', 'last', 'street']
+df = df.drop(columns=columns_to_drop)
+# ...exactly the same for df2 (test)
+```
+
+**Result:** 23 → 19 columns in both files. Train age 13–95, test age 15–96, hour 0–23.
+
+**Remember:** *Whatever you do to train, do to test.* (In one cell, the "Test hour" check printed `df` instead of `df2`, which is exactly the mistake this rule catches.)
+
+### 3b. Distance from home
+
+**The idea:** a card used far from home can be fraud. But a real shop doesn't move, so first check whether the merchant locations are real.
+
+**Code:**
+```python
+merchant_lat_counts = df.groupby("merchant")["merch_lat"].nunique()
+merchant_lat_counts.min(), merchant_lat_counts.median(), merchant_lat_counts.max()
+
+lat1, long1 = np.radians(df['lat']), np.radians(df['long'])
+lat2, long2 = np.radians(df['merch_lat']), np.radians(df['merch_long'])
+dlat, dlon = lat2 - lat1, long2 - long1
+a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+df['distance_km'] = 2 * 6371 * np.arcsin(np.sqrt(a))
+
+df.groupby('is_fraud')['distance_km'].agg(['mean', 'median'])
+```
+
+**Result:**
+- Each merchant has 727–4,403 different locations, and 0 merchants have a fixed one.
+- The distance is the same for fraud and normal: mean 76.27 vs 76.11 km.
+
+**Decision:** drop `distance_km`, `merch_lat` and `merch_long`.
+- **Data science reason:** a noise column gives trees chances to make random splits that fit train by luck.
+- **Banking reason:** every feature has to be built, monitored and justified. A useless one is pure cost.
+
+**Remember:** *A real shop doesn't move. Check before you trust a feature.*
+
+### 3c part 1. Time since the card's last transaction
+
+**The idea:** a thief uses a stolen card fast, before it gets blocked. So "how long since this card was last used?" can reveal fraud.
+
+**The 4 steps:**
+1. **Label** each row "train" or "test" (like name tags on luggage).
+2. **Stack** both tables, so a test card can see its history in train. *The past is allowed, the future is cheating.*
+3. **Sort** by card, then time. *Shuffled pages, wrong past.*
+4. **For each card**, subtract the previous purchase time from this one and convert to seconds. Then split the tables back apart using the labels.
+
+**Code:**
+```python
+train_data = df.copy(); train_data["dataset"] = "train"
+test_data = df2.copy(); test_data["dataset"] = "test"
+
+all_data = pd.concat([train_data, test_data], axis=0, ignore_index=True)
+all_data = all_data.sort_values(["cc_num", "trans_date_trans_time"]).reset_index(drop=True)
+all_data["secs_since_last"] = (
+    all_data.groupby("cc_num")["trans_date_trans_time"].diff().dt.total_seconds()
+)
+
+train = all_data[all_data["dataset"] == "train"].copy()
+test = all_data[all_data["dataset"] == "test"].copy()
+
+train["is_first_txn"] = train["secs_since_last"].isna().astype(int)
+test["is_first_txn"] = test["secs_since_last"].isna().astype(int)
+
+train.groupby("is_fraud")["secs_since_last"].median()
+```
+
+**Result:**
+- Empty rows: train 983 (= 983 cards) and test 16 (= 16 new cards). Both match the prediction.
+- Median gap: fraud 4,908 s (1.4 h) vs normal 16,623 s (4.6 h). Fraud is **about 3.4× faster**.
+
+**Decision on the empty rows:** leave them empty and add the `is_first_txn` flag. "No history" is unknown, and filling with the median would pretend it's normal. Trees handle empty values, and the flag makes it clear.
+
+**Mistake caught:** the 3 distance columns were dropped from train only, so they came back as empty values after combining. Always drop from both files.
+
+**Mentor's corrections:**
+- The column count went **20 → 17**, not 18 → 17, because `distance_km` had been added first (19 + 1 = 20). Keep counts exact: when the notebook becomes Python files, a wrong column count is where bugs hide.
+- In train, `is_first_txn` = 1 doesn't mean "new card". It means "first transaction we can see", because the data starts in Jan 2019 and those cards existed before. Only the 16 test cards are really new.
+
+**Why this feature matters later:** it's a strong model signal, an easy-to-explain reason ("used again 2 minutes after the last purchase"), the reason the live API needs a card-history table (each card's last transaction time), and something the drift monitor can watch.
+
+**Remember:** *Thieves are in a hurry.*
+
+### 3c part 2. Amount compared to the card's usual
+
+**The idea:** $400 is normal for some people and shocking for others. So ask "is it big **for this person**?"
+
+**The trap:** the card's average over **all** its purchases includes future purchases, which is leakage. At the card's first purchase, it would already "know" money that hasn't been spent yet.
+
+| Purchase | amt | Previous-only average (right) | All-purchases average (wrong) |
+|---|---|---|---|
+| 1st | $10 | empty | $80 |
+| 2nd | $20 | $10 | $80 |
+| 3rd | $30 | $15 | $80 |
+| 4th | $260 (fraud) | $20, so the ratio is 13× | $80, so the ratio is only about 3× |
+
+**Correct code (per card, can't mix cards):**
+```python
+g = all_data.groupby("cc_num")["amt"]
+all_data["card_avg_amt_before"] = (g.cumsum() - all_data["amt"]) / g.cumcount()
+all_data["amt_ratio"] = all_data["amt"] / all_data["card_avg_amt_before"]
+```
+The idea is (running total minus this amount) ÷ (number of previous purchases). A first purchase gives 0 ÷ 0, which is empty.
+
+**Result:** median `amt_ratio` is 5.23 for fraud vs 0.66 for normal. Empty rows: 983 train and 16 test. 24% of frauds are below 1 ("test small, then spend big").
+
+**Mistake caught:** the first version did `.expanding().mean().shift(1)`, and the shift ran across the whole column instead of inside each card. Each card's first purchase got the **previous card's** average. The giveaway was 1 empty row instead of 999. The hand check missed it because it used the very first card. **Always check a card from the middle.**
+
+**Remember:** *Big for whom?*
+
+### 3c part 3. How busy is the card? (`txn_count_24h`)
+
+**The idea:** a thief uses a stolen card many times in a short burst. Count the card's purchases in the last 24 hours. Banks call this a **velocity** feature.
+
+**Why a time window, not "last 5 rows":** 5 rows can be 10 minutes for a busy shopper and 2 weeks for a quiet one. A 24-hour window means the same for everyone.
+
+**Code:**
+```python
+rolling_txn_count = (
+    all_data.groupby("cc_num", sort=False)
+    .rolling("24h", on="trans_date_trans_time")["amt"]
+    .count()
+    .reset_index(level=0, drop=True)
+)
+all_data["txn_count_24h"] = rolling_txn_count.to_numpy()
+```
+
+**Checks:** minimum 1; 0 empty values; every card's first purchase = 1; a middle-card hand count matched (5 = 5); an independent recount of all 1.85M rows matched.
+
+**Result:** mean 5.23 for fraud vs 4.88 for normal (medians 5 vs 4). It's **weak**, only 7% higher, because busy and quiet cardholders have very different normal counts. It's the same "big for whom?" problem. Comparing to the card's usual count could make it stronger.
+
+**Remember:** *Thieves race the clock, so measure by the clock.*
+
+### 3d. Text columns: group or nametag?
+
+**The idea:** a column that describes a **kind** of thing ("online shopping", "female") lets the model learn a pattern. A column with about one value per person is a **nametag**: the model can only memorise people, the same problem as `trans_num`.
+
+**Code:**
+```python
+cols = ["category", "gender", "state", "city", "zip", "job",
+        "merchant", "lat", "long", "city_pop"]
+
+print(train[cols].nunique())                              # different values in total
+print(train.groupby("cc_num")[cols].nunique().max())      # 1 = never changes for a person
+```
+
+**Result:**
+
+| Column | Values | Per card | People per value | Decision | Reason |
+|---|---|---|---|---|---|
+| category | 14 | up to 14 | (describes the purchase) | **Keep** | 11× risk spread |
+| gender | 2 | 1 | about 490 | Drop | Protected attribute (fairness and legal risk) |
+| state | 51 | 1 | about 19 | Drop | High rates only in 1–3-person states (DE = 1 person, 100%) |
+| job | 494 | 1 | about 2 | Drop | Nametag |
+| merchant | 693 | up to 678 | (describes the purchase) | Drop | Differences between merchants are no bigger than luck; category covers it |
+| city_pop | 879 | 1 | about 1.1 | Drop | Nametag |
+| city | 894 | 1 | about 1.1 | Drop | Nametag |
+| lat | 968 | 1 | about 1.0 | Drop | Nametag (distance already gone) |
+| long | 969 | 1 | about 1.0 | Drop | Nametag |
+| zip | 970 | 1 | about 1.0 | Drop | Nametag |
+
+**Lessons:**
+- "It has nothing to do with fraud" is a **guess**. Use the number, or run a check.
+- 19 people per state means it's a group, not a nametag. But the fraud-rate check showed the "risky" states were tiny (1–3 people). *Tiny groups lie.*
+- Merchant: compare the real spread with what pure luck would give. If they match, there's no signal.
+
+**Remember:** *A group is a pattern. A nametag is memorising. Check, don't guess.*
+
+### 3e. Final column list and save
+
+**The idea:** every column goes into one of three groups.
+
+| Group | Columns | Why |
+|---|---|---|
+| **Features** (9) | `amt`, `category`, `hour`, `age`, `secs_since_last`, `is_first_txn`, `card_avg_amt_before`, `amt_ratio`, `txn_count_24h` | What the model learns from |
+| **Target** | `is_fraud` | What the model predicts |
+| **Helpers / audit** | `trans_date_trans_time`, `cc_num`, `gender` | Kept in the file, **never** given to the model: time for the Step 4 split, card ID to trace decisions, gender for fairness checks |
+
+Dropped: `merchant`, `city`, `state`, `zip`, `lat`, `long`, `city_pop`, `job`, `dob`, `dataset`.
+
+**Code:**
+```python
+features = ["amt", "category", "hour", "age", "secs_since_last", "is_first_txn",
+            "card_avg_amt_before", "amt_ratio", "txn_count_24h"]
+target = "is_fraud"
+helpers = ["trans_date_trans_time", "cc_num", "gender"]
+keep = helpers + features + [target]
+
+train_final = train[keep].copy()
+test_final = test[keep].copy()
+train_final["category"] = train_final["category"].astype("category")
+test_final["category"] = pd.Categorical(test_final["category"],
+                                        categories=train_final["category"].cat.categories)
+
+train_final.to_parquet("../data/processed/train.parquet", index=False)
+test_final.to_parquet("../data/processed/test.parquet", index=False)
+```
+
+**Why Parquet:** it keeps column types (dates stay dates) and is much smaller and faster than CSV.
+
+| File | CSV | Parquet | Smaller by |
+|---|---|---|---|
+| Train | 351.2 MB | 41.5 MB | 8.5× |
+| Test | 150.4 MB | 17.7 MB | 8.5× |
+
+**Checks:** both files have 13 columns with the same names. Reloading gives the same rows and fraud rates (0.579%, 0.386%). Dates stay datetime, and category stays category.
+
+**Remember:** *Features teach, helpers explain, the target is the answer.*
