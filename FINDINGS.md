@@ -8,7 +8,7 @@ One place for everything we found so far. For each finding:
 Data: `fraudTrain.csv` (Jan 2019 – Jun 2020) and `fraudTest.csv` (Jun – Dec 2020).
 Learning details and code are in [LEARNING_NOTES.md](LEARNING_NOTES.md).
 
-**Status:** Step 1 ✅ · Step 2 ✅ · Step 3a ✅ · Step 3b ✅ · Step 3c ✅ · Step 3d ✅ · Step 3e ✅ · Step 4 ✅ · Step 5 prep ✅ · Step 5 baseline ✅ · Step 6 part 1 ✅ · Step 6 part 2 ✅ · Step 6 part 3 ✅ · Step 6 ✅ · Step 7 ✅ (final test done) · Step 3d ⬜ · Step 3e ⬜
+**Status:** Step 1 ✅ · Step 2 ✅ · Step 3a ✅ · Step 3b ✅ · Step 3c ✅ · Step 3d ✅ · Step 3e ✅ · Step 4 ✅ · Step 5 prep ✅ · Step 5 baseline ✅ · Step 6 part 1 ✅ · Step 6 part 2 ✅ · Step 6 part 3 ✅ · Step 6 ✅ · Step 7 ✅ (final test done) · Step 8 ✅ · **Notebook phase done**. The decisions summary is the last cell of `notebooks/05_explain.ipynb`. The pipeline must reproduce val PR-AUC ≈ 0.940. · Step 3d ⬜ · Step 3e ⬜
 
 ---
 
@@ -123,6 +123,17 @@ Learning details and code are in [LEARNING_NOTES.md](LEARNING_NOTES.md).
 | 54 | Which cutoff for a team that can review about 1,500 alerts in 3 months? | 0.90 is the lowest cutoff under capacity (1,447 alerts): it catches 90.4% of frauds, and 78% of alerts are real. | Choose **0.90**, with 0.95 as the fallback (1,297 alerts) because there's little headroom. The cutoff is a **business** decision and must be monitored, because volume and fraud rate shift (test 0.386% vs val 0.556%). |
 | 55 | Which cutoff is cheapest? (cost = alerts × $10 + `amt` of missed frauds, cutoffs 0.50–0.99) | **0.59 → $35,211** (2,144 alerts, 60 missed frauds, 948 false alarms). 0.90 → $44,406 (1,447 alerts, 121 missed, 312 false alarms). No model → $671,623. | 0.59 saves $9,196 vs 0.90, and the model saves about 95% vs no model. Missed frauds average about $247 each (about 25 alerts' worth), so cost pushes the cutoff down. But 0.59 needs about 43% more analyst capacity and gives 3× the false alarms. Cheapest only if the bank adds analysts; with today's team, 0.90 is realistic. Chosen on val, so slightly optimistic. |
 | 56 | **Final exam:** how does the champion do on unseen test (opened once, cutoff 0.90)? | Test (6.3 months, 0.386% fraud): **PR-AUC 0.906** (val 0.940), ROC-AUC 0.998 (val 0.999), recall 87.6% (val 90.4%), precision 72.9% (val 78.4%), 698 false alarms, cost $85,477. **406 alerts/month** (val 479), cost $13,482/month (val $14,693). | **The honest score: PR-AUC 0.906.** ROC-AUC held, so the ranking holds; PR-AUC fell because fraud is rarer in test (prior shift), which cuts precision. The workload (406/month) fits the capacity of about 500/month. Nothing changes after seeing test. |
+
+---
+
+## Step 8: Explaining the model (SHAP)
+
+| # | Why we checked | What we found | How we use it |
+|---|---|---|---|
+| 57 | What drives the model overall? (SHAP on all 1,256 val frauds + 5,000 random normals) | Mean push size: amt 4.44, category 3.26, hour 1.41, age 0.69, secs_since_last 0.67, card_avg_amt_before 0.53, txn_count_24h 0.45, amt_ratio 0.39, **is_first_txn 0.00**. The receipt check adds up exactly (6.0297 = 6.0297). | The top 3 agree with gain (amt, category, hour). Places 4–5 differ: `age` differs most (#4 by SHAP, not in the gain top 5), because it gives small pushes on many transactions. `is_first_txn` is never used, since trees read the empty `secs_since_last` directly, so it's a candidate to drop. |
+| 58 | Can single decisions be explained? (reason codes, cutoff 0.90) | **Top fraud** (score 1.000): amt $702 ↑, 23:00 ↑, 20.8 h since the last purchase ↑ (11.6× the card's usual). **Top false alarm** (score 0.9995): amt $269 ↑, grocery_pos ↑, 03:00 ↑. | The false alarm matches the fraud pattern (a risky category, a few hundred dollars, at night), but it's only 2.9× the card's usual (vs 11.6×). An analyst seeing the reasons can check it quickly. That's why a human reviews alerts. |
+| 59 | Is the model fair by **gender**? (val, cutoff 0.90) | F: false alarm rate 0.164%, recall 86.9% (642 frauds). M: false alarm rate 0.108%, recall 94.0% (614 frauds). | **Women do worse on both**: about 1.5× the false alarm rate **and** 7 points less fraud protection. Gender isn't a feature, so the gap must come through **proxies** (for example spending categories). Worth flagging to model risk. |
+| 60 | Is the model fair by **age**? | 25–45: the highest false alarm rates (0.196%) and the lowest recall (80.8–85.2%). 55+: low false alarm rates (0.06–0.075%) and high recall (94.9–98.4%). Under 25 has only 71 frauds (noisy). | The model serves **older customers better** on both measures. `age` is a feature (SHAP #4). Next question: does dropping it close the gap, and at what cost to PR-AUC? Decide on val, never on test. |
 
 **Column count check (keep these exact):** 23 raw → 19 after 3a → 20 with `distance_km` → 17 after dropping the 3 distance columns → 19 with `secs_since_last` and `is_first_txn` → 21 with `card_avg_amt_before` and `amt_ratio` → 22 with `txn_count_24h` (+ the `dataset` helper = 23) → **final file: 13 columns** (9 features + 1 target + 3 helpers).
 

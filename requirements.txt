@@ -6,3 +6,4 @@ seaborn
 xgboost
 lightgbm
 pyarrow
+shap
