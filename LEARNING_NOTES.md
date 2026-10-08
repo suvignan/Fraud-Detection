@@ -770,3 +770,411 @@ data/raw/*.csv  -> 02_features ->  data/interim/features_{train,test}.parquet
 ```
 
 **Remember:** *Practise on the past, mock exam on the recent past, final exam once.*
+
+---
+
+## Step 5 prep: Data for logistic regression (`notebooks/03_split.ipynb`, model prep section)
+
+**The idea:** trees handle empty values and categories by themselves. Logistic regression is strict: **no empty values, numbers only.** So we prepare copies just for it, and the saved files stay as they are for the trees.
+
+**The golden rule:** anything that *learns* from data learns from **train only**, then the same thing is applied to val and test. A median is "learned", so take it from train.
+
+**Part 1: fill the empty values with train medians**
+```python
+train_lr, val_lr, test_lr = new_train.copy(), validation.copy(), test.copy()
+
+median_secs = train_lr["secs_since_last"].median()          # 16,469 s (about 4.6 h)
+median_avg_amt = train_lr["card_avg_amt_before"].median()   # $65.02
+median_ratio = train_lr["amt_ratio"].median()               # 0.666
+
+for d in (train_lr, val_lr, test_lr):
+    d["secs_since_last"] = d["secs_since_last"].fillna(median_secs)
+    d["card_avg_amt_before"] = d["card_avg_amt_before"].fillna(median_avg_amt)
+    d["amt_ratio"] = d["amt_ratio"].fillna(median_ratio)
+```
+Why the median: these columns are lopsided, and the median isn't pulled around by extreme values. `is_first_txn` still marks the filled rows, so nothing is lost.
+
+**Part 2: one-hot encode `category`**
+Numbering categories 1–14 would make the model think "14 is 14× bigger than 1", which is nonsense. Instead, each category gets its own 0/1 column, like 14 tick boxes with one ticked.
+```python
+train_cat = pd.get_dummies(train_lr["category"], prefix="category")
+val_cat = pd.get_dummies(val_lr["category"], prefix="category").reindex(columns=train_cat.columns, fill_value=0)
+test_cat = pd.get_dummies(test_lr["category"], prefix="category").reindex(columns=train_cat.columns, fill_value=0)
+```
+`reindex` to **train's** columns guarantees all sets line up, even if a category were missing from val or test.
+
+**Result:** 22 feature columns (9 − 1 + 14), 0 empty values, and the same columns in the same order in train, val and test. The helpers (`trans_date_trans_time`, `cc_num`, `gender`) and the target are kept out of X.
+
+**Remember:** *Learn on train, apply everywhere.*
+
+### Log transform and scaling (still for logistic regression only)
+
+**Idea 1, log:** a few giant values drag logistic regression around. log1p squashes big numbers more than small ones. *Log changes the ruler, not the line-up.*
+
+**Idea 2, scaling:** `amt` is in hundreds, `secs_since_last` in thousands and `is_first_txn` is 0/1. Without scaling, the model treats big-number columns as more important. StandardScaler puts every column at mean ≈ 0, std ≈ 1. *Same ruler for everyone.*
+
+**Code:**
+```python
+log_columns = ["amt", "secs_since_last", "card_avg_amt_before", "amt_ratio"]
+for col in log_columns:
+    train_lr[col] = np.log1p(train_lr[col])
+    val_lr[col] = np.log1p(val_lr[col])
+    test_lr[col] = np.log1p(test_lr[col])
+
+from sklearn.preprocessing import StandardScaler
+scaler = StandardScaler()
+scaler.fit(X_train)                                  # learn from TRAIN only
+X_train_scaled = pd.DataFrame(scaler.transform(X_train), columns=X_train.columns, index=X_train.index)
+X_val_scaled = pd.DataFrame(scaler.transform(X_val), columns=X_val.columns, index=X_val.index)
+X_test_scaled = pd.DataFrame(scaler.transform(X_test), columns=X_test.columns, index=X_test.index)
+```
+(Rebuild X **after** the log, otherwise the scaler sees the old, unlogged values.)
+
+**Result (skewness on train):**
+
+| Column | Before | After log1p |
+|---|---|---|
+| amt | 41.59 | −0.30 |
+| secs_since_last | 4.33 | −0.75 |
+| card_avg_amt_before | 9.55 | 0.21 |
+| amt_ratio | 57.77 | 1.60 |
+
+**`amt` after scaling:** train mean 0.000 (2.9e-16 is just rounding) and std 1.000. Val mean 0.002 and std 1.001.
+
+**Why val isn't exactly 0 and 1:** the scaler learned train's average and spread, and val is measured with **train's ruler**. If val came out exactly 0 and 1, the scaler would have been fitted on val, which is peeking. So "slightly off" is the proof it was done right.
+
+**Production note:** the live API must apply the same medians, the same log and the **same fitted scaler**, so they have to be saved, not left in the notebook.
+
+**Remember:** *Learn on train, apply everywhere. Slightly off on val = done right.*
+
+---
+
+## Step 5: Baseline model, logistic regression (`notebooks/03_split.ipynb`, end)
+
+**Three ideas:**
+1. **`class_weight="balanced"`:** fraud is 1 in 170, so a lazy model just says "not fraud". Balanced weights make missing a fraud cost about 170× more than a false alarm.
+2. **Scores, not yes/no:** `predict_proba(...)[:, 1]` gives a fraud score from 0 to 1. ROC-AUC and PR-AUC judge how well the model **ranks**. Choosing the cutoff comes later. *The order first, the cutoff after.*
+3. **Three scores:**
+   - **Accuracy:** the trap. "Always not fraud" already scores 99.4%.
+   - **ROC-AUC:** pick one fraud and one normal transaction. How often does the fraud score higher? 0.5 = coin flip, 1.0 = perfect.
+   - **PR-AUC (main score):** how clean the flagged list is, across all cutoffs. Random = the fraud rate (0.0056 on val), so compare with that, **not with 1**.
+
+**Code:**
+```python
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
+
+log_reg = LogisticRegression(class_weight="balanced", max_iter=1000)
+log_reg.fit(X_train_scaled, y_train)                       # learn from train only
+
+val_scores = log_reg.predict_proba(X_val_scaled)[:, 1]     # fraud scores
+val_preds = log_reg.predict(X_val_scaled)                  # yes/no, only for accuracy
+
+accuracy_score(y_val, val_preds)
+roc_auc_score(y_val, val_scores)
+average_precision_score(y_val, val_scores)                 # = PR-AUC
+
+weights = pd.Series(log_reg.coef_[0], index=X_train_scaled.columns)
+weights.reindex(weights.abs().sort_values(ascending=False).index).head(3)
+```
+
+**Result (val):**
+
+| Score | Value | Meaning |
+|---|---|---|
+| Accuracy | 0.910 | **Worse** than "always not fraud" (0.994), yet this model catches fraud. That's the accuracy trap. |
+| ROC-AUC | 0.933 | The fraud ranks above normal 93% of the time |
+| PR-AUC | 0.221 | About **40× better than random** (0.0056) |
+
+**Top weights:** `amt_ratio` +3.34, `amt` −3.06, `card_avg_amt_before` +1.33.
+
+**The trap in the weights:** `amt` is negative even though fraud amounts are bigger! After the log, `amt_ratio` ≈ log(amt) − log(card average), so the three columns carry almost the same information. The model shares the signal between them, so **individual signs can't be read alone**, like three people carrying one table. Together they say "an amount high for this card = fraud", which matches Step 3c.
+
+**What a straight line can't learn:** `hour` gets only +0.42. The risky window 22:00–03:59 wraps around midnight, so "later = riskier" doesn't fit. Trees can learn "hour ≥ 22 or hour ≤ 3".
+
+**Remember:** *Compare PR-AUC with random, not with 1. Don't read one weight alone when features overlap.*
+
+---
+
+## Step 6 part 1: First XGBoost model (`notebooks/04_xgboost.ipynb`)
+
+**The idea:**
+- **Boosting (XGBoost):** small trees built **one after another**. Each new tree fixes the mistakes of the team so far, like a student who re-studies only the questions they got wrong.
+- **Bagging (Random Forest):** many trees built **independently**, which then vote.
+
+**Trees skip most of Step 5's preparation:**
+- Empty values: XGBoost handles them itself.
+- Log and scaling: not needed, because a tree only cares about **order**. *Log changes the ruler, not the line-up.*
+- One-hot: not needed, because `enable_categorical=True` reads `category` directly.
+
+**`scale_pos_weight`** = normal rows ÷ fraud rows in train = 1,064,716 ÷ 6,250 = **170.4**. It's XGBoost's version of `class_weight="balanced"`, and it matches "1 fraud in about 170".
+
+**Code:**
+```python
+train = pd.read_parquet("../data/processed/train.parquet")
+val = pd.read_parquet("../data/processed/val.parquet")
+features = ["amt", "category", "hour", "age", "secs_since_last", "is_first_txn",
+            "card_avg_amt_before", "amt_ratio", "txn_count_24h"]
+X_train, y_train = train[features], train["is_fraud"]
+X_val, y_val = val[features], val["is_fraud"]
+
+scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+xgb = XGBClassifier(tree_method="hist", enable_categorical=True, scale_pos_weight=scale_pos_weight)
+xgb.fit(X_train, y_train)
+
+val_scores = xgb.predict_proba(X_val)[:, 1]
+average_precision_score(y_val, val_scores)      # PR-AUC
+```
+
+**Result:**
+
+| | Logistic regression | XGBoost |
+|---|---|---|
+| Val PR-AUC | 0.221 | **0.939** |
+| Val ROC-AUC | 0.933 | 0.999 |
+| Train PR-AUC | | 0.990 |
+
+**Why trees win:** they can learn "hour ≥ 22 **or** hour ≤ 3" (a straight line can't, because the window wraps around midnight), and they can combine features, like "big amount **and** high ratio **and** online category".
+
+**Memorising check:** compare train with val. 0.990 vs 0.939 is a gap of about 0.05, which is small, so there's mild overfitting. A big gap would mean the model memorised train.
+
+**Remember:** *Boosting fixes mistakes one tree at a time. Always compare train with val.*
+
+---
+
+## Step 6 part 2: What is the model using? (`notebooks/04_xgboost.ipynb`)
+
+**Feature importance ("gain"):** each split makes the trees' predictions a bit better. Gain measures how much each feature helped, **not how often it was used**. In XGBoost, "gain" is the average improvement per split, so read it as a **ranking**.
+
+```python
+gain_score = xgb.get_booster().get_score(importance_type="gain")
+gain_importance = pd.Series(gain_score).sort_values(ascending=False)
+gain_importance.head(5)
+```
+
+| Rank | Feature | Gain |
+|---|---|---|
+| 1 | amt | 5,047 |
+| 2 | category | 1,310 |
+| 3 | hour | 708 |
+| 4 | card_avg_amt_before | 173 |
+| 5 | txn_count_24h | 158 |
+
+The top 3 are the **generator rules** from Step 2 (amount cap, risky categories, night window). `amt_ratio` is missing because it overlaps with `amt` + `card_avg_amt_before`, the same overlap trap as in logistic regression.
+
+**The "what if" test:** importance can mislead when features overlap. The honest test is to **take features away and see what breaks**, like taking a player off the pitch to see whether the team still wins.
+
+```python
+card_features = ["secs_since_last", "is_first_txn", "card_avg_amt_before", "amt_ratio", "txn_count_24h"]
+features_no_card = [f for f in features if f not in card_features]     # amt, category, hour, age
+
+xgb_no_card = XGBClassifier(                       # EXACTLY the same settings: change one thing at a time
+    tree_method=xgb.get_params()["tree_method"],
+    enable_categorical=xgb.get_params()["enable_categorical"],
+    scale_pos_weight=xgb.get_params()["scale_pos_weight"],
+)
+xgb_no_card.fit(train[features_no_card], y_train)
+average_precision_score(y_val, xgb_no_card.predict_proba(val[features_no_card])[:, 1])
+```
+
+| Model | Val PR-AUC |
+|---|---|
+| With card features (9) | 0.939 |
+| Without (4) | 0.907 |
+
+**What it means:** the drop is small (0.032), so the model mostly uses the simple generator rules. But the card features still cut the remaining error (1 − PR-AUC) from 0.093 to 0.061, about **a third less**. On real data, where the simple rules aren't this clean, card history would probably matter more.
+
+**Remember:** *Gain shows what was used. Taking features away shows what was needed. Change one thing at a time.*
+
+---
+
+## Step 6 part 3: Early stopping (`notebooks/04_xgboost.ipynb`)
+
+**The idea:** early trees learn real patterns, so train and val both improve. Later trees fix quirks that only exist in train, so train keeps improving while val stalls. That's memorising. **Early stopping** watches val and stops when it hasn't improved for a while. Like a student who stops studying when mock-exam scores stop going up.
+
+**Code:**
+```python
+xgb_es = XGBClassifier(
+    tree_method="hist", enable_categorical=True, scale_pos_weight=scale_pos_weight,
+    n_estimators=2000,            # a ceiling, not a target
+    early_stopping_rounds=50,     # stop after 50 trees with no val improvement
+    eval_metric="aucpr",          # watch PR-AUC
+)   # in XGBoost 3.x these go in the constructor, NOT in .fit()
+xgb_es.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=100)
+
+xgb_es.best_iteration + 1         # trees kept (best_iteration counts from 0)
+```
+
+**Result:**
+
+| | 6.1 (100 trees) | 6.3 (early stopping) |
+|---|---|---|
+| Trees used | 100 | 86 |
+| Val PR-AUC | 0.939 | 0.940 |
+| Train PR-AUC | 0.990 | 0.987 |
+| Gap | 0.051 | 0.047 |
+
+The log stopped at tree 135 = 85 + 50 (it waited 50 trees, then stopped).
+
+**What it means:** the default 100 trees was already near the best point. The gap barely shrank, so the memorising comes from **how** each tree learns (depth, learning rate), not how many trees there are.
+
+**The caution:** val helped choose the stopping point, so the val score is now slightly optimistic. That's why **test stays sealed** until the very end.
+
+**Remember:** *Stop when the mock exam stops improving. Every time val helps you choose, it becomes a little less of an exam.*
+
+---
+
+## Step 6 part 4: XGBoost vs LightGBM (`notebooks/04_xgboost.ipynb`)
+
+**The banking angle:** when scores are close, banks also choose on **speed** (the API must answer fast), simplicity and **stability**. So measure time as well as score.
+
+**Code (key parts):**
+```python
+import time, lightgbm as lgb
+from lightgbm import LGBMClassifier
+
+lgbm = LGBMClassifier(n_estimators=2000, learning_rate=0.05,
+                      scale_pos_weight=scale_pos_weight, metric="average_precision", verbose=-1)
+start = time.perf_counter()
+lgbm.fit(X_train, y_train, eval_X=X_val, eval_y=y_val,
+         callbacks=[lgb.early_stopping(50), lgb.log_evaluation(100)])   # early stopping = a callback
+lgbm_train_time = time.perf_counter() - start
+
+lgbm.best_iteration_        # LightGBM counts trees from 1 (XGBoost's best_iteration counts from 0)
+```
+Timing pattern: `start = time.perf_counter()` → do the thing → `time.perf_counter() - start`.
+
+**The surprise:** with LightGBM's default learning rate (0.1) plus the big fraud weight (170), its trees **overshoot**. Val PR-AUC jumped around (0.27 → 0.26 → 0.40), so early stopping thought "no improvement" and quit after **4 trees** (PR-AUC 0.17). With `learning_rate=0.05` it climbs smoothly. **Lesson:** when early stopping stops absurdly early, look at the score curve before trusting it.
+
+**Result:**
+
+| | XGBoost | LightGBM (lr 0.05) |
+|---|---|---|
+| Trees kept | 86 | 471 |
+| Val PR-AUC | 0.940 | 0.941 |
+| Train PR-AUC | 0.987 | 0.987 |
+| Training time | 15 s | 17 s |
+| Score all val | **0.12 s** | 1.64 s |
+| Per transaction | 0.55 µs | 7.3 µs |
+
+**What it means:** the scores are a tie (0.001 apart, the same gap). XGBoost scores about **13× faster** because it uses about 5× fewer trees, and it was **stable at its defaults**. For a live API, that favours XGBoost.
+
+**Remember:** *When scores tie, choose on speed and stability.*
+
+**Mentor's notes on 6.4:** (1) The comparison wasn't perfectly fair, because LightGBM got a lower learning rate. Say so honestly; the scores tied anyway. (2) The model takes under 1 µs per transaction, so in the real API the slow part will be **looking up the card's history in the database** to build the card features, not the model.
+
+---
+
+## Step 7: Choosing the fraud cutoff (`notebooks/04_xgboost.ipynb`)
+
+**The idea:** the model gives a score, and the bank picks a cutoff. Above it, the transaction is flagged. It's like an airport metal detector: too sensitive and the queue never moves (false alarms), not sensitive enough and threats walk through (missed fraud).
+
+**Why not 0.5:** `scale_pos_weight=170` pushes scores upward, so 0.5 ≠ "50% chance of fraud". Scores are for **ranking**, so look at what each cutoff does.
+
+**The words:**
+- **Recall** = frauds caught ÷ all frauds. *Did we catch them all?*
+- **Precision** = frauds caught ÷ flagged. *Were our alerts right?*
+- Check: frauds caught + false alarms = flagged.
+
+**Code:**
+```python
+cutoffs = [0.5, 0.7, 0.9, 0.95, 0.99]
+all_val_frauds = y_val.sum()
+rows = []
+for cutoff in cutoffs:
+    flagged = val_scores_es >= cutoff
+    frauds_caught = (flagged & (y_val == 1)).sum()
+    false_alarms = (flagged & (y_val == 0)).sum()
+    rows.append({
+        "cutoff": cutoff,
+        "flagged": flagged.sum(),
+        "frauds_caught": frauds_caught,
+        "false_alarms": false_alarms,
+        "recall": frauds_caught / all_val_frauds,
+        "precision": frauds_caught / flagged.sum() if flagged.sum() > 0 else 0,
+    })
+threshold_summary = pd.DataFrame(rows)
+```
+
+**Result (val, 1,256 frauds):**
+
+| Cutoff | Flagged | Caught | Recall | False alarms | Precision |
+|---|---|---|---|---|---|
+| 0.50 | 2,350 | 1,206 | 96.0% | 1,144 | 51.3% |
+| 0.70 | 1,919 | 1,186 | 94.4% | 733 | 61.8% |
+| **0.90** | **1,447** | **1,135** | **90.4%** | **312** | **78.4%** |
+| 0.95 | 1,297 | 1,102 | 87.7% | 195 | 85.0% |
+| 0.99 | 1,059 | 1,008 | 80.3% | 51 | 95.2% |
+
+**Choosing with a capacity of about 1,500 alerts:** take the lowest cutoff that fits under capacity, because that gives the most fraud caught that the team can actually handle. That's **0.90**: 90.4% recall, 78% of alerts real. It leaves little headroom, so 0.95 is the fallback. Monitor the cutoff after go-live, because volume and fraud rate shift.
+
+**Remember:** *The model ranks, the business picks the cutoff. Recall = catch them all, precision = alerts were right.*
+
+### Step 7.2: Choosing the cutoff by money
+
+**The idea:** every alert costs **$10** (an analyst checks it), and every missed fraud costs **its amount** (a refund). The best cutoff is the one with the **lowest total cost**, like hiring just enough guards that wages + thefts is smallest.
+
+**Code:**
+```python
+amounts = X_val["amt"]                                  # real dollars (from Parquet, not logged)
+cutoffs = np.round(np.arange(0.50, 1.00, 0.01), 2)      # round, or 0.90 won't be found exactly
+no_model_cost = amounts[y_val == 1].sum()               # flag nothing = refund every fraud
+
+rows = []
+for cutoff in cutoffs:
+    flagged = val_scores_es >= cutoff
+    missed = (~flagged) & (y_val == 1)                  # ~ means "not"
+    alerts_cost = flagged.sum() * 10
+    missed_cost = amounts[missed].sum()
+    rows.append({"cutoff": cutoff, "alerts": flagged.sum(), "missed_frauds": missed.sum(),
+                 "total_cost": alerts_cost + missed_cost})
+cost_table = pd.DataFrame(rows)
+cheapest = cost_table.loc[cost_table["total_cost"].idxmin()]
+```
+
+**Result:**
+
+| | 0.59 (cheapest) | 0.90 (capacity pick) | No model |
+|---|---|---|---|
+| Alerts | 2,144 | 1,447 | 0 |
+| Missed frauds | 60 | 121 | 1,256 |
+| False alarms | 948 | 312 | 0 |
+| **Total cost** | **$35,211** | $44,406 | $671,623 |
+
+**Why the cheapest isn't 0.90:** one missed fraud averages about **$247**, the cost of about 25 alerts. Misses are expensive, so flagging more is cheaper. But 0.59 creates 2,144 alerts (43% over the team's capacity) and 3× the false alarms (more genuine customers blocked).
+
+**The trade-off in one line:** pure cost says 0.59, team capacity says 0.90, and customer friction pushes it higher. A good answer names the trade-off.
+
+**Remember:** *The best cutoff depends on what you count: money, capacity or customers.*
+
+### Step 7.3: The final exam (test, opened once)
+
+**The rule:** run it **once**. Whatever the result, don't change the model or the cutoff afterwards. Otherwise test becomes just another validation set and the honest score is gone. **Write your prediction first**, so you can't fool yourself afterwards. (Lesson learned: the prediction cell was left empty before running. If that happens, say so honestly; never backfill it.)
+
+**Code (key part):**
+```python
+test = pd.read_parquet("../data/processed/test.parquet")
+X_test, y_test = test[features], test[target]
+test_scores = xgb_es.predict_proba(X_test)[:, 1]        # only SCORE test, never train or tune on it
+
+months = (dates.max() - dates.min()).days / 30.44       # per-month numbers make val (3 mo) vs test (6.3 mo) fair
+```
+
+**Result (cutoff 0.90):**
+
+| | Val (3 months) | Test (6.3 months) |
+|---|---|---|
+| Fraud rate | 0.556% | 0.386% |
+| PR-AUC | 0.940 | **0.906** |
+| ROC-AUC | 0.999 | 0.998 |
+| Recall | 90.4% | 87.6% |
+| Precision | 78.4% | 72.9% |
+| Alerts per month | 479 | 406 |
+| Cost per month | $14,693 | $13,482 |
+
+**What it means:**
+- **ROC-AUC held (0.999 → 0.998), so the model ranks just as well** on unseen months.
+- **PR-AUC fell (0.940 → 0.906)** because fraud is rarer in test. With more normal transactions per fraud, more of them get flagged by mistake, so precision drops. That's **prior shift**, not a worse model.
+- Workload (406/month) fits the capacity of about 500/month. **The honest final score is PR-AUC 0.906.**
+
+**Remember:** *ROC-AUC measures ranking; PR-AUC also depends on how rare fraud is. The ranking held, the base rate moved.*

@@ -8,7 +8,7 @@ One place for everything we found so far. For each finding:
 Data: `fraudTrain.csv` (Jan 2019 – Jun 2020) and `fraudTest.csv` (Jun – Dec 2020).
 Learning details and code are in [LEARNING_NOTES.md](LEARNING_NOTES.md).
 
-**Status:** Step 1 ✅ · Step 2 ✅ · Step 3a ✅ · Step 3b ✅ · Step 3c ✅ · Step 3d ✅ · Step 3e ✅ · Step 4 ✅ · Step 3d ⬜ · Step 3e ⬜
+**Status:** Step 1 ✅ · Step 2 ✅ · Step 3a ✅ · Step 3b ✅ · Step 3c ✅ · Step 3d ✅ · Step 3e ✅ · Step 4 ✅ · Step 5 prep ✅ · Step 5 baseline ✅ · Step 6 part 1 ✅ · Step 6 part 2 ✅ · Step 6 part 3 ✅ · Step 6 ✅ · Step 7 ✅ (final test done) · Step 3d ⬜ · Step 3e ⬜
 
 ---
 
@@ -77,6 +77,52 @@ Learning details and code are in [LEARNING_NOTES.md](LEARNING_NOTES.md).
 | 36 | We need a "mock exam" set that's honest about the future | The train file was cut at 2020-03-21. Train: 2019-01-01 → 2020-03-20, 1,070,966 rows, 0.584% fraud. Validation: 2020-03-21 → 2020-06-21, 225,709 rows, 0.556%. Test: 2020-06-21 → 2020-12-31, 555,719 rows, 0.386%. The rows add up, and there's no overlap. | Train = learn, validation = compare models and tune, test = look **once** at the end. Cut by time, never randomly, because the model always predicts the future. |
 | 37 | Do the three sets have the same fraud rate? | Train and validation are close (0.584% vs 0.556%), but test is much lower (0.386%). | Validation won't fully warn us about test's lower rate, so a threshold picked on validation may over-flag on test. This is prior shift: monitor the threshold after deployment. |
 | 38 | How do later steps get the same sets every time? | Redoing the cut in every notebook risks a different date or a forgotten sort, which quietly gives different sets. | Saved once: `data/processed/train.parquet` (1,070,966), `val.parquet` (225,709), `test.parquet` (555,719). Every later step reads these. The cut date `2020-03-21` is written in a markdown cell, and later moves to `params.yaml`. The Step 3 output lives in `data/interim/features_*.parquet`, so the split never overwrites its own input. |
+
+---
+
+## Step 5 prep: Data for logistic regression
+
+| # | Why we checked | What we found | How we use it |
+|---|---|---|---|
+| 39 | Logistic regression can't handle empty values | Train-only medians: `secs_since_last` 16,469 s (4.6 h), `card_avg_amt_before` $65.02, `amt_ratio` 0.666. | Filled train, val and test with these **train** medians (learn on train, apply everywhere). `is_first_txn` still marks the originally empty rows. Done on in-notebook copies only; trees use the original data with its empty values. |
+| 40 | Logistic regression needs numbers, not text | `category` → 14 one-hot columns (0/1). Val and test were reindexed to train's columns. | 22 feature columns (9 − 1 + 14). 0 empty values and the same columns in the same order across all three sets. Helpers and the target are kept out of X. |
+| 41 | Are the long-tailed columns still lopsided? | Skewness on train, before → after log1p: `amt` 41.59 → −0.30, `secs_since_last` 4.33 → −0.75, `card_avg_amt_before` 9.55 → 0.21, `amt_ratio` 57.77 → 1.60 (still mildly skewed). | log1p applied to all 3 sets. It's a fixed formula that learns nothing, so it's safe everywhere. Only logistic regression needs it; trees don't. |
+| 42 | Are the columns on the same scale? | StandardScaler **fitted on train only** (22 columns). `amt` after scaling: train mean 0.000 / std 1.000, val mean 0.002 / std 1.001. | Val being slightly off 0 and 1 **proves** the scaler learned only from train (val is measured with train's ruler). For the live API, the medians, log step and fitted scaler must be **saved** and reused exactly. |
+
+---
+
+## Step 5: Baseline model (logistic regression)
+
+| # | Why we checked | What we found | How we use it |
+|---|---|---|---|
+| 43 | How good is a simple model? | On val: accuracy 0.910, ROC-AUC 0.933, **PR-AUC 0.221** (random = 0.0056, so about 40× better). | This is the **baseline** that the tree models must beat. Accuracy (0.910) is below "always not fraud" (0.994), which proves accuracy is misleading. |
+| 44 | Which features drive it? | Top weights: `amt_ratio` +3.34, `amt` −3.06, `card_avg_amt_before` +1.33. | The three overlap (after the log, ratio ≈ log amt − log average), so individual signs can't be read alone. **Together** they say "an amount high for this card = fraud", which matches Step 3c. |
+| 45 | What can't a linear model learn? | `hour` weight is only +0.42. The 22:00–03:59 risk window wraps around midnight, so a straight line can't capture it. `txn_count_24h` (−0.11) and `age` (+0.05) are near zero. | Expect tree models to do better: they can learn "hour ≥ 22 or hour ≤ 3". |
+
+---
+
+## Step 6: Tree models
+
+| # | Why we checked | What we found | How we use it |
+|---|---|---|---|
+| 46 | Do trees beat the baseline? | First XGBoost (defaults + `scale_pos_weight` 170.4, `hist`, `enable_categorical`): **val PR-AUC 0.939**, val ROC-AUC 0.999. That's about 4× the logistic regression (0.221). | Trees learn what a line can't: the midnight-wrapping night window, category effects, and "big amount for this card". It uses the original 9 features with no filling, log, scaling or one-hot. |
+| 47 | Is XGBoost memorising? | Train PR-AUC 0.990 vs val 0.939: a gap of 0.051. | A small gap, so mild overfitting. Tuning (for example tree depth) can shrink it. Keep watching the gap. |
+| 48 | What does XGBoost rely on? | Top 5 by gain: `amt` 5,047, `category` 1,310, `hour` 708, `card_avg_amt_before` 173, `txn_count_24h` 158. `amt_ratio` is not in the top 5 (it overlaps with `amt` + `card_avg_amt_before`). | The top 3 are the dataset's **generator rules** spotted in Step 2 (amount cap, risky categories, night window). Gain is the average improvement per split, so read it as a ranking. |
+| 49 | How much do the card-history features add? | Without the 5 card features (only `amt`, `category`, `hour`, `age`): val PR-AUC **0.907** vs **0.939** with them. | A small drop (0.032): most of the power comes from the simple rules. But the card features cut the remaining error (1 − PR-AUC) from 0.093 to 0.061, about a third. On real bank data, where the rules are less clean, card history would likely matter more. |
+| 50 | How many trees does XGBoost really need? | Early stopping (`n_estimators=2000`, `early_stopping_rounds=50`, `eval_metric="aucpr"`, val as `eval_set`): best_iteration 85, so **86 trees**. Val PR-AUC 0.940 (vs 0.939), train 0.987 (vs 0.990), gap 0.047 (vs 0.051). | The default 100 trees was already near the best. The gap barely moved, so memorising comes from **how** each tree learns (depth, learning rate), not how many trees there are. Val now helped choose, so it's slightly optimistic: **test stays sealed**. |
+| 51 | Does LightGBM work with the same settings? | Not at its default learning rate (0.1). With `scale_pos_weight` 170, val PR-AUC jumped around (0.27 → 0.26 → 0.40) and early stopping quit after **4 trees** (PR-AUC 0.17). With `learning_rate=0.05` it climbs smoothly. | LightGBM needs a gentler learning rate with a big class weight. That's a **stability** difference worth reporting. |
+| 52 | XGBoost or LightGBM? | XGBoost: 86 trees, val 0.940, train 0.987, 15 s to train, **0.12 s** to score all val (0.55 µs per transaction). LightGBM (lr 0.05): 471 trees, val 0.941, train 0.987, 17 s to train, **1.64 s** (7.3 µs per transaction). | The scores are the same (0.001 apart) and so are the gaps. XGBoost scores about **13× faster** (5× fewer trees) and was stable at its defaults, which favours XGBoost for the API. **Be honest:** the comparison wasn't perfectly fair (LightGBM got a lower learning rate), but the scores tied anyway. **Speed in production:** the model takes under 1 µs per transaction, so the slow part of the real API will be looking up the card's history in the database to build the card features. |
+
+---
+
+## Step 7: Choosing the cutoff
+
+| # | Why we checked | What we found | How we use it |
+|---|---|---|---|
+| 53 | What does each cutoff cost? (champion XGBoost, val, 1,256 frauds) | 0.50: 2,350 flagged, recall 96.0%, 1,144 false alarms, precision 51.3%. 0.70: 1,919 / 94.4% / 733 / 61.8%. **0.90: 1,447 / 90.4% / 312 / 78.4%**. 0.95: 1,297 / 87.7% / 195 / 85.0%. 0.99: 1,059 / 80.3% / 51 / 95.2%. | Higher cutoff = fewer false alarms and higher precision, but lower recall. 0.5 isn't automatically right, because `scale_pos_weight` pushes scores up. |
+| 54 | Which cutoff for a team that can review about 1,500 alerts in 3 months? | 0.90 is the lowest cutoff under capacity (1,447 alerts): it catches 90.4% of frauds, and 78% of alerts are real. | Choose **0.90**, with 0.95 as the fallback (1,297 alerts) because there's little headroom. The cutoff is a **business** decision and must be monitored, because volume and fraud rate shift (test 0.386% vs val 0.556%). |
+| 55 | Which cutoff is cheapest? (cost = alerts × $10 + `amt` of missed frauds, cutoffs 0.50–0.99) | **0.59 → $35,211** (2,144 alerts, 60 missed frauds, 948 false alarms). 0.90 → $44,406 (1,447 alerts, 121 missed, 312 false alarms). No model → $671,623. | 0.59 saves $9,196 vs 0.90, and the model saves about 95% vs no model. Missed frauds average about $247 each (about 25 alerts' worth), so cost pushes the cutoff down. But 0.59 needs about 43% more analyst capacity and gives 3× the false alarms. Cheapest only if the bank adds analysts; with today's team, 0.90 is realistic. Chosen on val, so slightly optimistic. |
+| 56 | **Final exam:** how does the champion do on unseen test (opened once, cutoff 0.90)? | Test (6.3 months, 0.386% fraud): **PR-AUC 0.906** (val 0.940), ROC-AUC 0.998 (val 0.999), recall 87.6% (val 90.4%), precision 72.9% (val 78.4%), 698 false alarms, cost $85,477. **406 alerts/month** (val 479), cost $13,482/month (val $14,693). | **The honest score: PR-AUC 0.906.** ROC-AUC held, so the ranking holds; PR-AUC fell because fraud is rarer in test (prior shift), which cuts precision. The workload (406/month) fits the capacity of about 500/month. Nothing changes after seeing test. |
 
 **Column count check (keep these exact):** 23 raw → 19 after 3a → 20 with `distance_km` → 17 after dropping the 3 distance columns → 19 with `secs_since_last` and `is_first_txn` → 21 with `card_avg_amt_before` and `amt_ratio` → 22 with `txn_count_24h` (+ the `dataset` helper = 23) → **final file: 13 columns** (9 features + 1 target + 3 helpers).
 
