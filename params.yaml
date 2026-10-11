@@ -1,0 +1,72 @@
+# Every choice the pipeline makes. Change a value here, never inside the code.
+# Source: the decisions summary (last cell of notebooks/05_explain.ipynb).
+# Column types and allowed ranges live in config/schema.yaml, not here.
+
+data:
+  raw_train: data/raw/fraudTrain.csv
+  raw_test: data/raw/fraudTest.csv
+  features_train: data/interim/features_train.parquet
+  features_test: data/interim/features_test.parquet
+  train: data/processed/train.parquet
+  val: data/processed/val.parquet
+  test: data/processed/test.parquet
+  time_column: trans_date_trans_time
+  card_column: cc_num
+  target: is_fraud
+  cut_date: "2020-03-21 00:00:00"   # train = before, val = on or after
+
+features:
+  use:                     # the 9 model features
+    - amt
+    - category
+    - hour
+    - age
+    - secs_since_last
+    - is_first_txn
+    - card_avg_amt_before
+    - amt_ratio
+    - txn_count_24h
+  categorical:
+    - category
+  helpers:                 # kept in the files, never given to the model
+    - trans_date_trans_time   # time split and sorting
+    - cc_num                  # card history
+    - gender                  # fairness checks only (protected attribute)
+  drop:                    # raw columns removed (reasons in docs/FINDINGS.md)
+    - "Unnamed: 0"            # old CSV row number
+    - unix_time               # copy of the timestamp, year relabelled
+    - trans_num               # random ID
+    - first                   # personal identifiers
+    - last
+    - street
+    - merch_lat               # random per transaction, no signal
+    - merch_long
+    - merchant                # adds nothing beyond category
+    - state                   # signal only from tiny states
+    - city                    # nametags (1-2 people per value)
+    - zip
+    - job
+    - lat
+    - long
+    - city_pop
+    - dob                     # turned into age
+  txn_window: "24h"        # window for txn_count_24h
+
+model:                     # XGBoost; anything not listed = library default
+  tree_method: hist
+  enable_categorical: true
+  n_estimators: 2000       # ceiling; early stopping picks the real number (expected 86)
+  early_stopping_rounds: 50
+  eval_metric: aucpr
+  # scale_pos_weight is NOT set here: computed from train at training time
+  # as normal / fraud (expected ~170.4)
+
+evaluation:
+  cutoff: 0.90             # fits analyst capacity (~1,500 alerts per 3 months)
+  alert_cost: 10           # dollars per alert (an assumption); a missed fraud costs its amt
+  expected_val_pr_auc: 0.940   # the notebook result the pipeline must reproduce
+  tolerance: 0.005
+
+artifacts:
+  model: models/model.json
+  metrics: reports/metrics.json

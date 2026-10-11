@@ -1,4 +1,18 @@
-data
-.venv
-ml environment
-.claude 
+# Data and models are tracked by DVC, never by git
+data/
+models/
+mlruns/
+
+# Environments and secrets
+.venv/
+ml environment/
+.env
+
+# Generated
+logs/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Tools
+.claude
