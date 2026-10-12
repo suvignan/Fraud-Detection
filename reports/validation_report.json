@@ -1,0 +1,15 @@
+{
+  "train": {
+    "columns": [],
+    "types": [],
+    "nulls": [],
+    "rules": []
+  },
+  "test": {
+    "columns": [],
+    "types": [],
+    "nulls": [],
+    "rules": []
+  },
+  "validation_status": true
+}

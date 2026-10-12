@@ -1,1 +1,57 @@
-# Data contract: expected columns, types and value ranges.
+# Data contract: what the INGESTED data (data/interim/ingested_*.parquet) must look like.
+# Type words: int, float, str, datetime (checked flexibly with pandas' is_*_dtype functions).
+# params.yaml = choices we make; schema.yaml = facts the data must obey.
+
+columns:
+  trans_date_trans_time: datetime
+  cc_num: int
+  merchant: str
+  category: str
+  amt: float
+  first: str
+  last: str
+  gender: str
+  street: str
+  city: str
+  state: str
+  zip: int
+  lat: float
+  long: float
+  city_pop: int
+  job: str
+  dob: str
+  trans_num: str
+  unix_time: int
+  merch_lat: float
+  merch_long: float
+  is_fraud: int
+
+not_null:              # columns the pipeline uses; empty values are not allowed
+  - trans_date_trans_time
+  - cc_num
+  - amt
+  - category
+  - dob
+  - gender
+  - is_fraud
+
+rules:
+  positive:            # must be > 0
+    - amt
+  allowed_values:      # nothing outside these lists
+    is_fraud: [0, 1]
+    category:
+      - entertainment
+      - food_dining
+      - gas_transport
+      - grocery_net
+      - grocery_pos
+      - health_fitness
+      - home
+      - kids_pets
+      - misc_net
+      - misc_pos
+      - personal_care
+      - shopping_net
+      - shopping_pos
+      - travel

@@ -5,6 +5,8 @@
 data:
   raw_train: data/raw/fraudTrain.csv
   raw_test: data/raw/fraudTest.csv
+  ingested_train: data/interim/ingested_train.parquet
+  ingested_test: data/interim/ingested_test.parquet
   features_train: data/interim/features_train.parquet
   features_test: data/interim/features_test.parquet
   train: data/processed/train.parquet
@@ -14,6 +16,10 @@ data:
   card_column: cc_num
   target: is_fraud
   cut_date: "2020-03-21 00:00:00"   # train = before, val = on or after
+
+validation:
+  schema: config/schema.yaml
+  report: reports/validation_report.json
 
 features:
   use:                     # the 9 model features
