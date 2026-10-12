@@ -1,5 +1,8 @@
 # Data and models are tracked by DVC, never by git
-data/
+# (the small .dvc ticket files inside data/ ARE committed)
+/data/raw/
+/data/interim/
+/data/processed/
 models/
 mlruns/
 
