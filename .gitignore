@@ -5,6 +5,7 @@
 /data/processed/
 models/
 mlruns/
+mlflow.db
 
 # Environments and secrets
 .venv/

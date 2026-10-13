@@ -79,3 +79,6 @@ artifacts:
   model: models/model.json
   metrics: reports/metrics.json
   feature_spec: models/feature_spec.json
+
+mlflow:
+  experiment: fraud-detection   # runs are grouped under this name (local or DagsHub)
