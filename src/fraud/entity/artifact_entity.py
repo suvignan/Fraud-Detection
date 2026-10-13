@@ -27,4 +27,23 @@ class FeatureEngineeringArtifact:
     features_test_path: Path
     feature_spec_path: Path
     n_features: int
+
+
+@dataclass(frozen=True)
+class DataSplitArtifact:
+    """Where train / val / test were saved, and their sizes."""
+    train_path: Path
+    val_path: Path
+    test_path: Path
+    train_rows: int
+    val_rows: int
+    test_rows: int
+
+
+@dataclass(frozen=True)
+class ModelTrainerArtifact:
+    """Where the model was saved, how many trees it kept, and the class weight used."""
+    model_path: Path
+    best_iteration: int
+    scale_pos_weight: float
     

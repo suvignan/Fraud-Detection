@@ -34,3 +34,16 @@ def save_json(file_path: str | Path, data: dict) -> None:
     except Exception as e:
         logger.exception("Error saving JSON file %s", file_path)
         raise FraudException(e) from e
+
+
+
+def load_json(file_path: str | Path) -> dict:
+    """Read a JSON file and return its contents as a dictionary."""
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = json.load(f)
+        logger.info("Loaded JSON file: %s", file_path)
+        return content
+    except Exception as e:
+        logger.exception("Error loading JSON file %s", file_path)
+        raise FraudException(e) from e

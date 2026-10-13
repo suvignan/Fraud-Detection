@@ -64,6 +64,7 @@ model:                     # XGBoost; anything not listed = library default
   n_estimators: 2000       # ceiling; early stopping picks the real number (expected 86)
   early_stopping_rounds: 50
   eval_metric: aucpr
+  random_state: 42
   # scale_pos_weight is NOT set here: computed from train at training time
   # as normal / fraud (expected ~170.4)
 
