@@ -18,3 +18,13 @@ class DataValidationArtifact:
     validation_status: bool
     report_path: Path
     message: str
+
+
+@dataclass(frozen=True)
+class FeatureEngineeringArtifact:
+    """Where the features were saved, and where the feature spec is."""
+    features_train_path: Path
+    features_test_path: Path
+    feature_spec_path: Path
+    n_features: int
+    

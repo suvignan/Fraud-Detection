@@ -18,3 +18,17 @@ class DataValidationConfig:
     schema_path: Path
     report_path: Path
 
+
+@dataclass(frozen=True)
+class FeatureEngineeringConfig:
+    """Where to save the features and spec, plus the feature settings from params.yaml."""
+    features_train_path: Path
+    features_test_path: Path
+    feature_spec_path: Path
+    drop_columns: list[str]
+    txn_window: str
+    features: list[str]          # the 9 model features, in order
+    output_columns: list[str]    # helpers + features + target, the saved column order
+
+
+
