@@ -46,4 +46,12 @@ class ModelTrainerArtifact:
     model_path: Path
     best_iteration: int
     scale_pos_weight: float
-    
+
+
+@dataclass(frozen=True)
+class ModelEvaluationArtifact:
+    """Where the evaluation metrics are saved, and the results of the evaluation."""
+    metrics_path: Path
+    val_pr_auc: float
+    test_pr_auc: float
+    is_model_accepted: bool

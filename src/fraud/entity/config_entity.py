@@ -49,4 +49,14 @@ class ModelTrainerConfig:
     model_path: Path
     feature_spec_path: Path
     target: str
-    
+
+
+@dataclass(frozen=True)
+class ModelEvaluationConfig:
+    """The cutoff, alert cost and quality-gate minimum; where to save the metrics."""
+    cutoff: float
+    alert_cost: float
+    min_val_pr_auc: float
+    metrics_path: Path
+    feature_spec_path: Path
+    target: str

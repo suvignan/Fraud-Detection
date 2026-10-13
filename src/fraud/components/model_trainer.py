@@ -7,7 +7,7 @@ from xgboost import XGBClassifier
 from fraud.entity.artifact_entity import DataSplitArtifact, ModelTrainerArtifact
 from fraud.entity.config_entity import ModelTrainerConfig
 from fraud.exception import FraudException
-from fraud.features.build_features import set_category_type
+from fraud.features.build_features import make_model_input
 from fraud.logger import get_logger
 from fraud.utils.common import load_json, read_yaml
 
@@ -23,8 +23,7 @@ class ModelTrainer:
 
     def _prepare(self, df: pd.DataFrame, spec: dict) -> tuple[pd.DataFrame, pd.Series]:
         """X in the spec's feature order with the spec's 14 categories; y = the target."""
-        X = df[spec["features"]].copy()
-        X = set_category_type(X, spec["categories"])
+        X = make_model_input(df, spec)
         y = df[self.config.target]
         return X, y
 

@@ -50,3 +50,10 @@ def set_category_type(df: pd.DataFrame, categories: list[str]) -> pd.DataFrame:
     df = df.copy()
     df["category"] = pd.Categorical(df["category"], categories=categories)
     return df
+
+
+def make_model_input(df:pd.DataFrame,spec:dict) -> pd.DataFrame:
+    """Return the model's X in the spec's feature order with the spec's 14 categories."""
+    X = df[spec["features"]].copy()
+    X = set_category_type(X, spec["categories"])
+    return X

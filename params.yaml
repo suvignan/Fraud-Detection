@@ -73,6 +73,7 @@ evaluation:
   alert_cost: 10           # dollars per alert (an assumption); a missed fraud costs its amt
   expected_val_pr_auc: 0.940   # the notebook result the pipeline must reproduce
   tolerance: 0.005
+  min_val_pr_auc: 0.90
 
 artifacts:
   model: models/model.json
