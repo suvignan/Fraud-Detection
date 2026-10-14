@@ -12,3 +12,6 @@ dvc[s3]
 mlflow
 python-dotenv
 pytest
+httpx
+fastapi
+uvicorn
