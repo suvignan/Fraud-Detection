@@ -1,0 +1,263 @@
+schema: '2.0'
+stages:
+  ingest:
+    cmd: python -m fraud.components.data_ingestion
+    deps:
+    - path: data/raw/fraudTest.csv
+      hash: md5
+      md5: 692357a2589a1a6fcd44f14b3e1f9d2c
+      size: 150354339
+    - path: data/raw/fraudTrain.csv
+      hash: md5
+      md5: 9723893e5492dc0551036edcf596e284
+      size: 351238196
+    - path: src/fraud/components/data_ingestion.py
+      hash: md5
+      md5: 76aa986006bfe78890ea49eb77779f23
+      size: 2572
+    params:
+      params.yaml:
+        data.ingested_test: data/interim/ingested_test.parquet
+        data.ingested_train: data/interim/ingested_train.parquet
+        data.raw_test: data/raw/fraudTest.csv
+        data.raw_train: data/raw/fraudTrain.csv
+    outs:
+    - path: data/interim/ingested_test.parquet
+      hash: md5
+      md5: 7f01dbef304e0f9fbcd4b1fec1b1080e
+      size: 44044332
+    - path: data/interim/ingested_train.parquet
+      hash: md5
+      md5: 05ea13ef5409d408e085df9f81e9f86e
+      size: 102449903
+  validate:
+    cmd: python -m fraud.components.data_validation
+    deps:
+    - path: config/schema.yaml
+      hash: md5
+      md5: 57ce34e0fbd67ecc72908eff640861a7
+      size: 1189
+    - path: data/interim/ingested_test.parquet
+      hash: md5
+      md5: 7f01dbef304e0f9fbcd4b1fec1b1080e
+      size: 44044332
+    - path: data/interim/ingested_train.parquet
+      hash: md5
+      md5: 05ea13ef5409d408e085df9f81e9f86e
+      size: 102449903
+    - path: src/fraud/components/data_validation.py
+      hash: md5
+      md5: fc8391561d8d5d525b7c47c56eb143db
+      size: 5845
+    params:
+      params.yaml:
+        data.ingested_test: data/interim/ingested_test.parquet
+        data.ingested_train: data/interim/ingested_train.parquet
+        validation.report: reports/validation_report.json
+        validation.schema: config/schema.yaml
+    outs:
+    - path: reports/validation_report.json
+      hash: md5
+      md5: b129f5af845f0a1d43f22fcb1e41b1ff
+      size: 218
+  features:
+    cmd: python -m fraud.components.feature_engineering
+    deps:
+    - path: data/interim/ingested_test.parquet
+      hash: md5
+      md5: 7f01dbef304e0f9fbcd4b1fec1b1080e
+      size: 44044332
+    - path: data/interim/ingested_train.parquet
+      hash: md5
+      md5: 05ea13ef5409d408e085df9f81e9f86e
+      size: 102449903
+    - path: reports/validation_report.json
+      hash: md5
+      md5: b129f5af845f0a1d43f22fcb1e41b1ff
+      size: 218
+    - path: src/fraud/components/feature_engineering.py
+      hash: md5
+      md5: 6795ca125ffd88ae3a2e1263c5e98301
+      size: 5238
+    - path: src/fraud/features/build_features.py
+      hash: md5
+      md5: b86fe8872ac988649ee0f49aa8cd974a
+      size: 2130
+    params:
+      params.yaml:
+        artifacts.feature_spec: models/feature_spec.json
+        data.features_test: data/interim/features_test.parquet
+        data.features_train: data/interim/features_train.parquet
+        data.ingested_test: data/interim/ingested_test.parquet
+        data.ingested_train: data/interim/ingested_train.parquet
+        data.target: is_fraud
+        features.drop:
+        - 'Unnamed: 0'
+        - unix_time
+        - trans_num
+        - first
+        - last
+        - street
+        - merch_lat
+        - merch_long
+        - merchant
+        - state
+        - city
+        - zip
+        - job
+        - lat
+        - long
+        - city_pop
+        - dob
+        features.helpers:
+        - trans_date_trans_time
+        - cc_num
+        - gender
+        features.txn_window: 24h
+        features.use:
+        - amt
+        - category
+        - hour
+        - age
+        - secs_since_last
+        - is_first_txn
+        - card_avg_amt_before
+        - amt_ratio
+        - txn_count_24h
+        validation.report: reports/validation_report.json
+    outs:
+    - path: data/interim/features_test.parquet
+      hash: md5
+      md5: 394a7db2b8b29fef25302236c3573b0c
+      size: 17710544
+    - path: data/interim/features_train.parquet
+      hash: md5
+      md5: 10c4ffbbb147fdb11f2f8ed00a708ce4
+      size: 41507185
+    - path: models/feature_spec.json
+      hash: md5
+      md5: 4387d625a0a0ebb11f3ecee254545c95
+      size: 487
+  split:
+    cmd: python -m fraud.components.data_split
+    deps:
+    - path: data/interim/features_test.parquet
+      hash: md5
+      md5: 394a7db2b8b29fef25302236c3573b0c
+      size: 17710544
+    - path: data/interim/features_train.parquet
+      hash: md5
+      md5: 10c4ffbbb147fdb11f2f8ed00a708ce4
+      size: 41507185
+    - path: src/fraud/components/data_split.py
+      hash: md5
+      md5: 4e509914f9dda74aab1ff590e1b3a9ad
+      size: 3327
+    params:
+      params.yaml:
+        data.cut_date: '2020-03-21 00:00:00'
+        data.features_test: data/interim/features_test.parquet
+        data.features_train: data/interim/features_train.parquet
+        data.target: is_fraud
+        data.test: data/processed/test.parquet
+        data.time_column: trans_date_trans_time
+        data.train: data/processed/train.parquet
+        data.val: data/processed/val.parquet
+    outs:
+    - path: data/processed/test.parquet
+      hash: md5
+      md5: 394a7db2b8b29fef25302236c3573b0c
+      size: 17710544
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: 76db2e3c64cf66a7e1d625fae66d2f96
+      size: 34933386
+    - path: data/processed/val.parquet
+      hash: md5
+      md5: 3710b741ee31e2def75387fda56ee9b5
+      size: 8093008
+  train:
+    cmd: python -m fraud.components.model_trainer
+    deps:
+    - path: data/processed/train.parquet
+      hash: md5
+      md5: 76db2e3c64cf66a7e1d625fae66d2f96
+      size: 34933386
+    - path: data/processed/val.parquet
+      hash: md5
+      md5: 3710b741ee31e2def75387fda56ee9b5
+      size: 8093008
+    - path: models/feature_spec.json
+      hash: md5
+      md5: 4387d625a0a0ebb11f3ecee254545c95
+      size: 487
+    - path: src/fraud/components/model_trainer.py
+      hash: md5
+      md5: e5ff98395363900056370d489733aa14
+      size: 3255
+    - path: src/fraud/features/build_features.py
+      hash: md5
+      md5: b86fe8872ac988649ee0f49aa8cd974a
+      size: 2130
+    params:
+      params.yaml:
+        artifacts.feature_spec: models/feature_spec.json
+        artifacts.model: models/model.json
+        data.target: is_fraud
+        data.train: data/processed/train.parquet
+        data.val: data/processed/val.parquet
+        model:
+          tree_method: hist
+          enable_categorical: true
+          n_estimators: 2000
+          early_stopping_rounds: 50
+          eval_metric: aucpr
+          random_state: 42
+    outs:
+    - path: models/model.json
+      hash: md5
+      md5: 72b46678548f99480c0e3fbc27b2ee26
+      size: 854367
+  evaluate:
+    cmd: python -m fraud.components.model_evaluation
+    deps:
+    - path: data/processed/test.parquet
+      hash: md5
+      md5: 394a7db2b8b29fef25302236c3573b0c
+      size: 17710544
+    - path: data/processed/val.parquet
+      hash: md5
+      md5: 3710b741ee31e2def75387fda56ee9b5
+      size: 8093008
+    - path: models/feature_spec.json
+      hash: md5
+      md5: 4387d625a0a0ebb11f3ecee254545c95
+      size: 487
+    - path: models/model.json
+      hash: md5
+      md5: 72b46678548f99480c0e3fbc27b2ee26
+      size: 854367
+    - path: src/fraud/components/model_evaluation.py
+      hash: md5
+      md5: e2b7c30866716d8c6c1e9f8d6e672b9d
+      size: 5666
+    - path: src/fraud/features/build_features.py
+      hash: md5
+      md5: b86fe8872ac988649ee0f49aa8cd974a
+      size: 2130
+    params:
+      params.yaml:
+        artifacts.feature_spec: models/feature_spec.json
+        artifacts.metrics: reports/metrics.json
+        artifacts.model: models/model.json
+        data.target: is_fraud
+        data.test: data/processed/test.parquet
+        data.val: data/processed/val.parquet
+        evaluation.alert_cost: 10
+        evaluation.cutoff: 0.9
+        evaluation.min_val_pr_auc: 0.9
+    outs:
+    - path: reports/metrics.json
+      hash: md5
+      md5: 43adf245b91a4b19e987564d2c85be8a
+      size: 614

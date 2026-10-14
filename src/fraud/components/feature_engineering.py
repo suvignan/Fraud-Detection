@@ -3,18 +3,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from fraud.components.data_ingestion import DataIngestion
-from fraud.components.data_validation import DataValidation
 from fraud.entity.artifact_entity import (
     DataIngestionArtifact,
     DataValidationArtifact,
     FeatureEngineeringArtifact,
 )
-from fraud.entity.config_entity import (
-    DataIngestionConfig,
-    DataValidationConfig,
-    FeatureEngineeringConfig,
-)
+from fraud.entity.config_entity import FeatureEngineeringConfig
 from fraud.exception import FraudException
 from fraud.features.build_features import (
     add_card_history_features,
@@ -23,7 +17,7 @@ from fraud.features.build_features import (
     set_category_type,
 )
 from fraud.logger import get_logger
-from fraud.utils.common import read_yaml, save_json
+from fraud.utils.common import load_json, read_yaml, save_json
 
 logger = get_logger(__name__)
 
@@ -96,17 +90,19 @@ if __name__ == "__main__":
     params = read_yaml("params.yaml")
     data, feats = params["data"], params["features"]
 
-    ingestion_artifact = DataIngestion(DataIngestionConfig(
-        raw_train_path=Path(data["raw_train"]),
-        raw_test_path=Path(data["raw_test"]),
+    # Standalone (DVC runs each stage as its own command): rebuild both input receipts from disk.
+    ingestion_artifact = DataIngestionArtifact(
         ingested_train_path=Path(data["ingested_train"]),
         ingested_test_path=Path(data["ingested_test"]),
-    )).initiate_data_ingestion()
-
-    validation_artifact = DataValidation(ingestion_artifact, DataValidationConfig(
-        schema_path=Path(params["validation"]["schema"]),
-        report_path=Path(params["validation"]["report"]),
-    )).initiate_data_validation()
+        train_rows=0, test_rows=0,   # not used by feature engineering
+    )
+    # Validation's verdict lives on disk in its report: that file IS the receipt between commands.
+    report_path = Path(params["validation"]["report"])
+    validation_artifact = DataValidationArtifact(
+        validation_status=load_json(report_path)["validation_status"],
+        report_path=report_path,
+        message="read from the validation report",
+    )
 
     feature_config = FeatureEngineeringConfig(
         features_train_path=Path(data["features_train"]),
@@ -117,5 +113,4 @@ if __name__ == "__main__":
         features=feats["use"],
         output_columns=feats["helpers"] + feats["use"] + [data["target"]],
     )
-    artifact = FeatureEngineering(ingestion_artifact, validation_artifact, feature_config).initiate_feature_engineering()
-    print(artifact)
+    print(FeatureEngineering(ingestion_artifact, validation_artifact, feature_config).initiate_feature_engineering())

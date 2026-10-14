@@ -1,1 +1,118 @@
 # DVC pipeline stages (added after the plain pipeline reproduces val ~0.940).
+stages:
+  ingest:
+    cmd: python -m fraud.components.data_ingestion
+    deps:
+      - data/raw/fraudTrain.csv
+      - data/raw/fraudTest.csv
+      - src/fraud/components/data_ingestion.py
+    params:
+      - data.raw_train
+      - data.raw_test
+      - data.ingested_train
+      - data.ingested_test
+    outs:
+      - data/interim/ingested_train.parquet
+      - data/interim/ingested_test.parquet
+
+  validate:
+    cmd: python -m fraud.components.data_validation
+    deps:
+      - data/interim/ingested_train.parquet
+      - data/interim/ingested_test.parquet
+      - config/schema.yaml
+      - src/fraud/components/data_validation.py
+    params:
+      - data.ingested_train
+      - data.ingested_test
+      - validation.schema
+      - validation.report
+    outs:
+      - reports/validation_report.json:
+          cache: false
+
+  features:
+    cmd: python -m fraud.components.feature_engineering
+    deps:
+      - data/interim/ingested_train.parquet
+      - data/interim/ingested_test.parquet
+      - reports/validation_report.json          # the validation verdict ("receipt on the shelf")
+      - src/fraud/components/feature_engineering.py
+      - src/fraud/features/build_features.py    # the shared recipes
+    params:
+      - data.ingested_train
+      - data.ingested_test
+      - data.features_train
+      - data.features_test
+      - data.target
+      - validation.report
+      - artifacts.feature_spec
+      - features.drop
+      - features.txn_window
+      - features.use
+      - features.helpers
+    outs:
+      - data/interim/features_train.parquet
+      - data/interim/features_test.parquet
+      - models/feature_spec.json
+
+  split:
+    cmd: python -m fraud.components.data_split
+    deps:
+      - data/interim/features_train.parquet
+      - data/interim/features_test.parquet
+      - src/fraud/components/data_split.py
+    params:
+      - data.features_train
+      - data.features_test
+      - data.cut_date
+      - data.time_column
+      - data.target
+      - data.train
+      - data.val
+      - data.test
+    outs:
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - data/processed/test.parquet
+
+  train:
+    cmd: python -m fraud.components.model_trainer
+    deps:
+      - data/processed/train.parquet
+      - data/processed/val.parquet
+      - models/feature_spec.json
+      - src/fraud/components/model_trainer.py
+      - src/fraud/features/build_features.py    # make_model_input
+    params:
+      - model                                   # the whole section: any XGBoost setting change retrains
+      - artifacts.model
+      - artifacts.feature_spec
+      - data.target
+      - data.train
+      - data.val
+    outs:
+      - models/model.json
+
+  evaluate:
+    cmd: python -m fraud.components.model_evaluation
+    deps:
+      - data/processed/val.parquet
+      - data/processed/test.parquet
+      - models/model.json
+      - models/feature_spec.json
+      - src/fraud/components/model_evaluation.py
+      - src/fraud/features/build_features.py    # make_model_input
+    params:
+      - evaluation.cutoff
+      - evaluation.alert_cost
+      - evaluation.min_val_pr_auc
+      - artifacts.model
+      - artifacts.metrics
+      - artifacts.feature_spec
+      - data.target
+      - data.val
+      - data.test
+    metrics:
+      - reports/metrics.json:
+          cache: false

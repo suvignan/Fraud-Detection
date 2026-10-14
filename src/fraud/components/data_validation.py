@@ -3,9 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from fraud.components.data_ingestion import DataIngestion
 from fraud.entity.artifact_entity import DataIngestionArtifact, DataValidationArtifact
-from fraud.entity.config_entity import DataIngestionConfig, DataValidationConfig
+from fraud.entity.config_entity import DataValidationConfig
 from fraud.exception import FraudException
 from fraud.logger import get_logger
 from fraud.utils.common import read_yaml, save_json
@@ -130,17 +129,14 @@ if __name__ == "__main__":
     params = read_yaml("params.yaml")
     data = params["data"]
 
-    ingestion_config = DataIngestionConfig(
-        raw_train_path=Path(data["raw_train"]),
-        raw_test_path=Path(data["raw_test"]),
+    # Standalone (DVC runs each stage as its own command): rebuild the ingestion receipt from disk.
+    ingestion_artifact = DataIngestionArtifact(
         ingested_train_path=Path(data["ingested_train"]),
         ingested_test_path=Path(data["ingested_test"]),
+        train_rows=0, test_rows=0,   # not used by validation
     )
-    ingestion_artifact = DataIngestion(ingestion_config).initiate_data_ingestion()
-
     validation_config = DataValidationConfig(
         schema_path=Path(params["validation"]["schema"]),
         report_path=Path(params["validation"]["report"]),
     )
-    validation_artifact = DataValidation(ingestion_artifact, validation_config).initiate_data_validation()
-    print(validation_artifact)
+    print(DataValidation(ingestion_artifact, validation_config).initiate_data_validation())
