@@ -40,6 +40,34 @@ def add_card_history_features(df: pd.DataFrame, window: str) -> pd.DataFrame:
     return df
 
 
+def card_features_from_totals(
+    txn_count: int,
+    amt_total: float,
+    last_txn_time,
+    recent_txn_times: list,
+    txn_time,
+    amt: float,
+    window: str,
+) -> dict:
+    """The SAME 5 card features as add_card_history_features, from running totals instead of full history.
+
+    Used by the API (one transaction at a time). It's separate code, so tests/test_running_totals.py
+    proves it equals add_card_history_features.
+    """
+    if txn_count == 0:  # brand-new card: no history, exactly like the first row of a card in training
+        return {"secs_since_last": np.nan, "is_first_txn": 1, "card_avg_amt_before": np.nan,
+                "amt_ratio": np.nan, "txn_count_24h": 1.0}
+    avg_before = amt_total / txn_count
+    window_start = pd.Timestamp(txn_time) - pd.Timedelta(window)
+    return {
+        "secs_since_last": (pd.Timestamp(txn_time) - pd.Timestamp(last_txn_time)).total_seconds(),
+        "is_first_txn": 0,
+        "card_avg_amt_before": avg_before,
+        "amt_ratio": amt / avg_before,
+        "txn_count_24h": float(1 + sum(pd.Timestamp(t) > window_start for t in recent_txn_times)),  # +1 = this one
+    }
+
+
 def drop_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     """Remove the listed columns (ignores any that are already gone)."""
     return df.drop(columns=columns, errors="ignore")

@@ -14,11 +14,11 @@ from sqlalchemy.orm import Session
 from xgboost import XGBClassifier
 
 from fraud.api.card_key import card_key
-from fraud.api.db import CardTransaction, PredictionLog, create_tables, get_engine
-from fraud.api.history import FileHistoryStore, HistoryStore, NeonHistoryStore
+from fraud.api.db import PredictionLog, create_tables, get_engine
+from fraud.api.history import FileHistoryStore, HistoryStore, NeonHistoryStore, add_to_card_state
 from fraud.api.reasons import reason_codes
 from fraud.api.schemas import PredictionResponse, TransactionRequest
-from fraud.features.build_features import add_card_history_features, add_time_features, make_model_input
+from fraud.features.build_features import add_time_features, card_features_from_totals, make_model_input
 from fraud.logger import get_logger
 from fraud.utils.common import load_json, read_yaml
 
@@ -26,13 +26,16 @@ logger = get_logger(__name__)
 
 
 def build_model_input(txn: TransactionRequest, history: HistoryStore, window: str, spec: dict) -> pd.DataFrame:
-    """The API's feature path: SAME recipe functions as training -> no training-serving skew."""
-    past = history.get_history(txn.cc_num, txn.trans_date_trans_time)        # 1. earlier purchases only
-    new_row = pd.DataFrame([txn.model_dump()])                                # 2. this transaction...
-    combined = pd.concat([past, new_row], ignore_index=True)                  #    ...as the newest row
-    combined = add_card_history_features(combined, window)                    # 3. card features
-    last_row = add_time_features(combined.tail(1))                            # 4. hour/age need only this row
-    return make_model_input(last_row, spec)                                   # 5. spec order + 14 categories
+    """The API's feature path: card running totals -> the 5 card features; shared recipes for the rest."""
+    state = history.get_card_state(txn.cc_num, txn.trans_date_trans_time)        # 1. what we know before now
+    row = pd.DataFrame([txn.model_dump()])                                        # 2. this transaction
+    card_features = card_features_from_totals(                                    # 3. the 5 card features
+        state.txn_count, state.amt_total, state.last_txn_time, state.recent_txn_times,
+        txn.trans_date_trans_time, txn.amt, window,
+    )
+    row = row.assign(**card_features)
+    row = add_time_features(row)                                                  # 4. hour, age
+    return make_model_input(row, spec)                                            # 5. spec order + 14 categories
 
 
 @asynccontextmanager
@@ -56,10 +59,12 @@ async def lifespan(app: FastAPI):
     if backend == "neon":
         app.state.engine = get_engine()
         create_tables(app.state.engine)
-        app.state.history = NeonHistoryStore(app.state.engine)
+        app.state.history = NeonHistoryStore(app.state.engine, app.state.window)
     elif backend == "file":
         app.state.engine = None                       # file mode: offline, nothing is written anywhere
-        app.state.history = FileHistoryStore([Path(params["data"]["ingested_train"]), Path(params["data"]["ingested_test"])])
+        app.state.history = FileHistoryStore(
+            [Path(params["data"]["ingested_train"]), Path(params["data"]["ingested_test"])], app.state.window
+        )
     else:
         raise RuntimeError(f"HISTORY_BACKEND must be 'file' or 'neon', got '{backend}'")
     logger.info("History backend: %s", backend)
@@ -91,12 +96,12 @@ def predict(txn: TransactionRequest) -> PredictionResponse:
         reason_codes=reason_codes(app.state.model, X),
     )
     if app.state.engine is not None:                                # Neon mode: log + remember this transaction
-        record_prediction(app.state.engine, txn, X, response)
+        record_prediction(app.state.engine, txn, X, response, app.state.window)
     return response
 
 
-def record_prediction(engine, txn: TransactionRequest, X: pd.DataFrame, response: PredictionResponse) -> None:
-    """One database transaction: the prediction goes in the log AND the purchase joins the card's history."""
+def record_prediction(engine, txn: TransactionRequest, X: pd.DataFrame, response: PredictionResponse, window: str) -> None:
+    """One database transaction: the prediction goes in the log AND the purchase updates the card's totals."""
     key = card_key(txn.cc_num)
     features = {name: (None if pd.isna(value) else value if isinstance(value, str) else float(value))
                 for name, value in X.iloc[0].items()}           # JSON has no NaN -> empty values become null
@@ -106,4 +111,4 @@ def record_prediction(engine, txn: TransactionRequest, X: pd.DataFrame, response
             amt=txn.amt, category=txn.category, features=features,
             score=response.fraud_score, decision=response.decision,
         ))
-        session.add(CardTransaction(card_key=key, txn_time=txn.trans_date_trans_time, amt=txn.amt))
+        add_to_card_state(session, key, txn.trans_date_trans_time, txn.amt, window)

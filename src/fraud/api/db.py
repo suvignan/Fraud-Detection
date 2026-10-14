@@ -2,14 +2,17 @@
 
 Create the tables:   python -m fraud.api.db
 Card numbers are NEVER stored: card_key = HMAC-SHA256(cc_num) from fraud.api.card_key.
+
+Running totals instead of full history: one row per card + only the last 24 h of purchases.
+That's all the 5 card features need, so storage stays tiny and each request is 2 small queries.
 """
 import os
 from datetime import datetime
 
 from dotenv import load_dotenv
-from sqlalchemy import CheckConstraint, DateTime, Double, Index, SmallInteger, String, Text, create_engine, func
+from sqlalchemy import CheckConstraint, DateTime, Double, Index, Integer, SmallInteger, String, Text, create_engine, func
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from fraud.logger import get_logger
 
@@ -21,19 +24,28 @@ class Base(DeclarativeBase):
     """Every table class inherits from this; Base.metadata knows all of them."""
 
 
-class CardTransaction(Base):
-    """Every card's transactions: the API reads a card's history from here."""
-    __tablename__ = "card_transactions"
+class CardStats(Base):
+    """ONE row per card: everything needed for count/average/time-since-last features."""
+    __tablename__ = "card_stats"
+
+    card_key: Mapped[str] = mapped_column(String(64), primary_key=True)   # HMAC of the card number
+    txn_count: Mapped[int] = mapped_column(Integer)
+    amt_total: Mapped[float] = mapped_column(Double)
+    last_txn_time: Mapped[datetime] = mapped_column(DateTime)
+
+
+class RecentTransaction(Base):
+    """Only purchases from the card's last 24 h (older rows are deleted): for txn_count_24h."""
+    __tablename__ = "recent_transactions"
     __table_args__ = (
-        CheckConstraint("amt > 0", name="amt_positive"),
-        # history lookup = "this card's rows before this time": the index makes it a jump, not a scan
-        Index("idx_card_transactions_card_time", "card_key", "txn_time"),
+        CheckConstraint("amt > 0", name="recent_amt_positive"),
+        Index("idx_recent_card_time", "card_key", "txn_time"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    card_key: Mapped[str] = mapped_column(String(64))       # HMAC of the card number
+    card_key: Mapped[str] = mapped_column(String(64))
     txn_time: Mapped[datetime] = mapped_column(DateTime)
-    amt: Mapped[float] = mapped_column(Double)              # Double = float64: exact round-trip -> parity
+    amt: Mapped[float] = mapped_column(Double)
 
 
 class PredictionLog(Base):
@@ -48,10 +60,10 @@ class PredictionLog(Base):
     txn_time: Mapped[datetime] = mapped_column(DateTime)
     amt: Mapped[float] = mapped_column(Double)
     category: Mapped[str] = mapped_column(Text)
-    features: Mapped[dict] = mapped_column(JSONB)            # the exact 9 model inputs, as JSON
+    features: Mapped[dict] = mapped_column(JSONB)                 # the exact 9 model inputs, as JSON
     score: Mapped[float] = mapped_column(Double)
     decision: Mapped[str] = mapped_column(Text)
-    true_label: Mapped[int | None] = mapped_column(SmallInteger)   # "| None" = may be empty (filled later)
+    true_label: Mapped[int | None] = mapped_column(SmallInteger)  # "| None" = may be empty (filled later)
 
 
 def get_engine():

@@ -1,4 +1,4 @@
-"""Parity: the API builds EXACTLY the same model input as the training pipeline (no training-serving skew)."""
+"""Parity: the API (running totals) builds the same model input as the training pipeline (no skew)."""
 from pathlib import Path
 
 import pandas as pd
@@ -18,7 +18,8 @@ NEEDED = [Path("data/interim/features_test.parquet"), Path("data/interim/ingeste
 def test_api_features_match_the_pipeline_exactly():
     params = read_yaml("params.yaml")
     spec = load_json(params["artifacts"]["feature_spec"])
-    store = FileHistoryStore([Path(params["data"]["ingested_train"]), Path(params["data"]["ingested_test"])])
+    window = params["features"]["txn_window"]
+    store = FileHistoryStore([Path(params["data"]["ingested_train"]), Path(params["data"]["ingested_test"])], window)
 
     # 5 test-period transactions, incl. frauds, with the pipeline's features (the answer key)
     pipeline = pd.read_parquet("data/interim/features_test.parquet")
@@ -32,6 +33,7 @@ def test_api_features_match_the_pipeline_exactly():
 
     for (_, req), (_, expected) in zip(requests.iterrows(), sample.iterrows()):
         txn = TransactionRequest(**req.to_dict())
-        api_X = build_model_input(txn, store, params["features"]["txn_window"], spec).reset_index(drop=True)
+        api_X = build_model_input(txn, store, window, spec).reset_index(drop=True)
         pipeline_X = make_model_input(expected.to_frame().T, spec).reset_index(drop=True)
-        pd.testing.assert_frame_equal(api_X, pipeline_X.astype(api_X.dtypes))
+        # running totals add up in a different order -> allow tiny decimal differences (65.0200000001 vs 65.02)
+        pd.testing.assert_frame_equal(api_X, pipeline_X.astype(api_X.dtypes), check_exact=False, rtol=1e-9)
