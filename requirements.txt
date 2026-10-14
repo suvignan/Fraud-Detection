@@ -11,3 +11,4 @@ pyyaml
 dvc[s3]
 mlflow
 python-dotenv
+pytest
