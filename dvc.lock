@@ -81,8 +81,8 @@ stages:
       size: 5238
     - path: src/fraud/features/build_features.py
       hash: md5
-      md5: b86fe8872ac988649ee0f49aa8cd974a
-      size: 2130
+      md5: e87241d767577fba32ce12f41e4dd72b
+      size: 3277
     params:
       params.yaml:
         artifacts.feature_spec: models/feature_spec.json
@@ -197,8 +197,8 @@ stages:
       size: 3255
     - path: src/fraud/features/build_features.py
       hash: md5
-      md5: b86fe8872ac988649ee0f49aa8cd974a
-      size: 2130
+      md5: e87241d767577fba32ce12f41e4dd72b
+      size: 3277
     params:
       params.yaml:
         artifacts.feature_spec: models/feature_spec.json
@@ -243,8 +243,8 @@ stages:
       size: 5666
     - path: src/fraud/features/build_features.py
       hash: md5
-      md5: b86fe8872ac988649ee0f49aa8cd974a
-      size: 2130
+      md5: e87241d767577fba32ce12f41e4dd72b
+      size: 3277
     params:
       params.yaml:
         artifacts.feature_spec: models/feature_spec.json
