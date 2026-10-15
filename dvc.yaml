@@ -54,7 +54,8 @@ stages:
     outs:
       - data/interim/features_train.parquet
       - data/interim/features_test.parquet
-      - models/feature_spec.json
+      - models/feature_spec.json:
+          cache: false                          # stored in git (needed by the Docker image)
 
   split:
     cmd: python -m fraud.components.data_split
@@ -94,8 +95,10 @@ stages:
       - data.train
       - data.val
     outs:
-      - models/model.json
-      - models/guardrails.json                  # rule limits from the train split
+      - models/model.json:
+          cache: false                          # stored in git (needed by the Docker image)
+      - models/guardrails.json:                 # rule limits from the train split
+          cache: false
 
   evaluate:
     cmd: python -m fraud.components.model_evaluation

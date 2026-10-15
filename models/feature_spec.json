@@ -1,0 +1,29 @@
+{
+  "features": [
+    "amt",
+    "category",
+    "hour",
+    "age",
+    "secs_since_last",
+    "is_first_txn",
+    "card_avg_amt_before",
+    "amt_ratio",
+    "txn_count_24h"
+  ],
+  "categories": [
+    "entertainment",
+    "food_dining",
+    "gas_transport",
+    "grocery_net",
+    "grocery_pos",
+    "health_fitness",
+    "home",
+    "kids_pets",
+    "misc_net",
+    "misc_pos",
+    "personal_care",
+    "shopping_net",
+    "shopping_pos",
+    "travel"
+  ]
+}

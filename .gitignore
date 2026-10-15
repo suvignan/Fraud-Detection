@@ -1,9 +1,13 @@
-# Data and models are tracked by DVC, never by git
+# Data is tracked by DVC, never by git
 # (the small .dvc ticket files inside data/ ARE committed)
 /data/raw/
 /data/interim/
 /data/processed/
-models/
+# models: git tracks ONLY the 3 small files the Docker image needs (Render builds from GitHub)
+models/*
+!models/model.json
+!models/feature_spec.json
+!models/guardrails.json
 mlruns/
 mlflow.db
 
