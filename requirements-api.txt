@@ -7,6 +7,7 @@ pandas==3.0.6
 numpy==2.5.3
 # pyarrow: not needed (the container reads history from Neon, never from Parquet files)
 xgboost-cpu==3.4.1
+scikit-learn==1.9.1          # XGBClassifier is XGBoost's scikit-learn wrapper: it needs sklearn installed
 PyYAML==6.0.3
 python-dotenv==1.2.4
 SQLAlchemy==2.1.4
