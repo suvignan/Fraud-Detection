@@ -10,7 +10,18 @@ import os
 from datetime import datetime
 
 from dotenv import load_dotenv
-from sqlalchemy import CheckConstraint, DateTime, Double, Index, Integer, SmallInteger, String, Text, create_engine, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Double,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    create_engine,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 

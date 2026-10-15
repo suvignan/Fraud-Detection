@@ -1,0 +1,13 @@
+# Only what the API needs at runtime (the Docker image installs this, not requirements.txt).
+# Exact versions = the same versions the model was built and tested with.
+fastapi==0.143.0
+uvicorn==0.54.0
+pydantic==2.14.1
+pandas==3.0.6
+numpy==2.5.3
+# pyarrow: not needed (the container reads history from Neon, never from Parquet files)
+xgboost-cpu==3.4.1
+PyYAML==6.0.3
+python-dotenv==1.2.4
+SQLAlchemy==2.1.4
+psycopg[binary]==3.3.6

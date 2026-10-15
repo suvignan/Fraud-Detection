@@ -1,0 +1,21 @@
+# Never sent to Docker: secrets, data, environments, and anything the API doesn't need.
+.env
+.env.*
+!.env.example
+data/
+logs/
+notebooks/
+mlruns/
+mlflow.db
+reports/
+docs/
+practice/
+tests/
+ml environment/
+.venv/
+.git/
+.dvc/
+.claude/
+**/__pycache__/
+*.egg-info/
+.pytest_cache/

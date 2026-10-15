@@ -1,6 +1,7 @@
 """Small shared helpers: read_yaml, save_json, etc."""
-from pathlib import Path
 import json
+from pathlib import Path
+
 import yaml
 
 from fraud.exception import FraudException

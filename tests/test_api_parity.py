@@ -4,18 +4,20 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from fraud.api.history import FileHistoryStore
-from fraud.api.main import build_model_input
-from fraud.api.schemas import TransactionRequest
-from fraud.features.build_features import make_model_input
-from fraud.utils.common import load_json, read_yaml
-
 NEEDED = [Path("data/interim/features_test.parquet"), Path("data/interim/ingested_test.parquet"),
           Path("data/interim/ingested_train.parquet"), Path("models/feature_spec.json")]
 
 
 @pytest.mark.skipif(not all(p.exists() for p in NEEDED), reason="needs the pipeline's outputs")
 def test_api_features_match_the_pipeline_exactly():
+    # imported HERE, not at the top: fraud.api.schemas reads models/feature_spec.json on import,
+    # which doesn't exist in CI -> a top-level import would crash before skipif could skip
+    from fraud.api.history import FileHistoryStore
+    from fraud.api.main import build_model_input
+    from fraud.api.schemas import TransactionRequest
+    from fraud.features.build_features import make_model_input
+    from fraud.utils.common import load_json, read_yaml
+
     params = read_yaml("params.yaml")
     spec = load_json(params["artifacts"]["feature_spec"])
     window = params["features"]["txn_window"]

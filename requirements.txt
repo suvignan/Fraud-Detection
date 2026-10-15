@@ -16,3 +16,4 @@ httpx
 fastapi
 uvicorn
 psycopg[binary]
+ruff

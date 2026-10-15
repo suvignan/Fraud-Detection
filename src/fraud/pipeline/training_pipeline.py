@@ -138,7 +138,9 @@ class TrainingPipeline:
             with mlflow.start_run():  # closes the run automatically; marks it FAILED if a step crashes
                 ingestion = DataIngestion(self._ingestion_config()).initiate_data_ingestion()
                 validation = DataValidation(ingestion, self._validation_config()).initiate_data_validation()
-                features = FeatureEngineering(ingestion, validation, self._feature_config()).initiate_feature_engineering()
+                features = FeatureEngineering(
+                    ingestion, validation, self._feature_config()
+                ).initiate_feature_engineering()
                 split = DataSplit(features, self._split_config()).initiate_data_split()
                 trainer = ModelTrainer(split, self._trainer_config()).initiate_model_training()
                 evaluation = ModelEvaluation(split, trainer, self._evaluation_config()).initiate_model_evaluation()

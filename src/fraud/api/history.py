@@ -82,7 +82,8 @@ class NeonHistoryStore(HistoryStore):
             .outerjoin(RecentTransaction, and_(
                 RecentTransaction.card_key == CardStats.card_key,
                 RecentTransaction.txn_time > before - self.window,
-                RecentTransaction.txn_time <= before,   # live store never holds THIS txn yet -> same-second earlier ones count
+                # <= : the live store never holds THIS txn yet, so same-second earlier ones count
+                RecentTransaction.txn_time <= before,
             ))
             .where(CardStats.card_key == card_key(cc_num))
         )

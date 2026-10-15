@@ -100,7 +100,9 @@ def predict(txn: TransactionRequest) -> PredictionResponse:
     return response
 
 
-def record_prediction(engine, txn: TransactionRequest, X: pd.DataFrame, response: PredictionResponse, window: str) -> None:
+def record_prediction(
+    engine, txn: TransactionRequest, X: pd.DataFrame, response: PredictionResponse, window: str
+) -> None:
     """One database transaction: the prediction goes in the log AND the purchase updates the card's totals."""
     key = card_key(txn.cc_num)
     features = {name: (None if pd.isna(value) else value if isinstance(value, str) else float(value))

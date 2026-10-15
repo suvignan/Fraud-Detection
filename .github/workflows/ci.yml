@@ -1,1 +1,34 @@
-# CI: install, run tests on every push (filled in later).
+# CI: on every push and pull request, lint + test the code, then prove the Docker image still builds.
+# Tests that need pipeline outputs (data, model) SKIP here: those files live in DVC, not git (dvc pull comes on Day 9).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest          # a fresh Linux machine from GitHub, thrown away after the run
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip                # reuse downloaded packages between runs -> faster
+
+      - name: Install
+        run: |
+          pip install -r requirements-api.txt pyarrow pytest httpx ruff
+          pip install -e .
+
+      - name: Lint (ruff)
+        run: ruff check src tests
+
+      - name: Test (pytest)
+        run: pytest -q -rs          # -rs = print WHY each skipped test was skipped
+
+  # Day 9: add a job that runs `dvc pull` (DagsHub token from GitHub Secrets) and builds the Docker image.
+  # It can't build here yet: the Dockerfile copies models/model.json, which lives in DVC, not git.
