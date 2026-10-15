@@ -9,6 +9,8 @@
 | **01: Project walkthrough** (this file) | "Tell me about your project." The 30-second, 2-minute and 10-minute versions. |
 | **02: Questions and answers** | Every likely question with a model answer, an analogy, and the follow-up ("cross") questions. |
 | **03: How to stand out** | What strong interviewers look for, phrases to use, mistakes to avoid, and a practice plan. |
+| **04: Pipeline and MLOps** | The modular pipeline, DVC, MLflow, tests and CI. |
+| **05: API and production** | FastAPI, Neon, running totals, guardrails, Docker, deployment, scaling follow-ups. |
 
 **Golden rule:** never memorise word for word. Learn the **story** and the **numbers**, then say it in your own words. Interviewers can hear a script.
 
@@ -16,7 +18,7 @@
 
 ## 1. The 30-second version (the elevator pitch)
 
-> "I built a credit-card fraud detection system on 1.85 million transactions, where only about half a percent are fraud. The main challenges were the extreme rarity of fraud and avoiding **data leakage**, so I split the data **by time** and built per-card history features using **only the past**. A tuned XGBoost model reached a **PR-AUC of 0.906 on an untouched test set**, against **0.22** for a logistic-regression baseline. I then chose the alert cutoff from **analyst capacity and dollar cost**, explained every alert with **SHAP reason codes**, and ran a **fairness check** by gender and age. Next, I'm turning the notebooks into a production pipeline."
+> "I built a credit-card fraud detection system on 1.85 million transactions, where only about half a percent are fraud. The main challenges were the extreme rarity of fraud and avoiding **data leakage**, so I split the data **by time** and built per-card history features using **only the past**. A tuned XGBoost model reached a **PR-AUC of 0.906 on an untouched test set**, against **0.22** for a logistic-regression baseline. I then chose the alert cutoff from **analyst capacity and dollar cost**, explained every alert with **SHAP reason codes**, and ran a **fairness check** by gender and age. Then I took it to production: a tested, reproducible pipeline with DVC and MLflow, and a **live FastAPI service** in Docker that scores a transaction in about **90 ms** of server time, using running totals per card in Postgres and **guardrails** for inputs the model can't judge."
 
 **Why it works:** it gives the problem, the hard part, the result with a number, the business side and the responsible-AI side in about 30 seconds. Every sentence invites a follow-up question you're ready for.
 
@@ -35,7 +37,9 @@ Follow this order. Each line is one or two sentences.
 7. **Decision:** a **0.90 cutoff** fits the analyst team (about 500 alerts a month), catching about **90% of fraud** with **78% of alerts real**.
 8. **Final test (opened once):** **PR-AUC 0.906**. The drop from 0.94 is mostly because fraud got rarer in the test period (**prior shift**), and the ranking quality held (ROC-AUC 0.998).
 9. **Trust:** **SHAP reason codes** for every alert, and a **fairness check** that found gaps by gender and age, logged as next experiments.
-10. **Next:** a modular Python pipeline with a config file, tests, and an API.
+10. **Pipeline:** six tested components; every setting in `params.yaml`; DVC reruns only changed stages; MLflow records every run; it reproduces the notebooks exactly (0.9401 / 0.9058).
+11. **Live API:** FastAPI in Docker on Render, next to Neon Postgres. Card state as **running totals** (storage 411 MB → 9 MB), card numbers stored only as an **HMAC**, a **parity test** proving the API's features equal training's, and about **90 ms** server-side per prediction.
+12. **Stress test → guardrails:** extreme inputs exposed two blind spots (new cards, amounts above the training range), so those go to a third decision, **review**, adding only about 1 review per 3 months on validation.
 
 ---
 
@@ -193,17 +197,21 @@ The model gives a **score** from 0 to 1. The bank must decide **at what score to
 - Ages 25–45: the highest false alarm rate (0.196%) and the lowest recall (81–85%).
 - These are logged as next experiments (retrain without `age`, find the proxies), not hidden.
 
-### Step 8: What comes next (production)
+### Step 8: Production (built and deployed)
 
 ```
- params.yaml (all decisions) --> features.py --> train.py --> evaluate.py --> model file
-                                                                    |
-            first automatic test: must reproduce val PR-AUC ~ 0.940 |
-                                                                    v
- live transaction --> API --> card-history lookup --> model --> score + 3 reason codes
-                                                         |
-                                            monitoring: fraud rate, drift, precision
+ TRAINING:  params.yaml --> ingest --> validate --> features --> split --> train --> evaluate (quality gate)
+            dvc repro reruns only changed stages · MLflow logs every run · pytest + CI on every push
+
+ SERVING:   transaction --> FastAPI (Docker, Render, Ohio) --> card state from Neon (running totals)
+                        --> same feature code as training --> XGBoost --> flag / review / approve
+                        --> SHAP reason codes --> logged to prediction_log
 ```
+- **Proof of correctness:** the pipeline's features are identical to the notebook's; the API's features equal the
+  pipeline's on 2,000 test transactions.
+- **Engineering wins:** storage 411 MB → 8.9 MB; per-request latency from ~1.3 s (first version, from India) to
+  ~90 ms server-side once deployed next to the database.
+- **Details:** see files 04 and 05.
 
 ---
 
@@ -223,6 +231,12 @@ The model gives a **score** from 0 to 1. The bank must decide **at what score to
 | Recall / precision at 0.90 (test) | 87.6% / 72.9% |
 | Money saved vs no model (val) | about 95% |
 | Without card features | 0.907 (vs 0.939) |
+| Tests | 23 (feature invariants, parity, guardrails, ...) |
+| Neon storage: full history → running totals | 411 MB → 8.9 MB |
+| Server-side time per prediction (live) | ~90 ms |
+| Guardrail limits | $28,948.90 (train max) · $546.72 (train 99th percentile) |
+| Reviews added on validation | 1 in 3 months (vs ~500/month capacity) |
+| Docker image | 757 MB, non-root |
 
 ---
 
@@ -233,5 +247,7 @@ The model gives a **score** from 0 to 1. The bank must decide **at what score to
 3. **Validation was used for several choices** (early stopping, cutoff), so its 0.940 is slightly optimistic. That's why test exists.
 4. **Fairness gaps were found but not fixed yet.** They're documented as the next experiments.
 5. **The LightGBM comparison wasn't perfectly equal on tuning.** It got a lower learning rate, but the scores tied anyway.
+6. **Two model blind spots, found by stress-testing the live API:** scores freeze above ~$1,200 (trees don't extrapolate past the largest training fraud, $1,372), and brand-new cards are under-flagged (no history; the training data's "first purchases" were just where the dataset began). **Mitigated** with guardrails that send those cases to human review.
+7. **Engineering limits:** no idempotency yet (a retried request counts twice in a card's totals); transactions must arrive in time order; the model files are committed to git as a deploy shortcut (the clean design pulls them with DVC in CI).
 
 > Saying limitations **before** you're asked shows maturity. Interviewers trust a candidate who knows where their work is weak.

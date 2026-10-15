@@ -484,6 +484,8 @@ Using **separate cutoffs per group** might equalise rates, but using a protected
 
 ## Section L: Production and MLOps
 
+> **Update:** this section was written before the production phase. It's all built now, with real numbers: see **Part 4 (pipeline and MLOps)** and **Part 5 (API and production)**. Use those answers first.
+
 ### L1. How would you deploy this?
 
 **Answer:**

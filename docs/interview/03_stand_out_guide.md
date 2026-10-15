@@ -56,7 +56,11 @@ For "tell me about a time..." (behavioural) questions, use **STAR**:
 | "I used a 0.5 threshold." | "I chose 0.90 from analyst capacity, and I modelled cost to show the cheapest option too." |
 | "The feature importance shows amount matters." | "Gain and SHAP agreed on the top 3, and a removal test confirmed it." |
 | "It's fair because I removed gender." | "Removing gender isn't enough. Women still had 1.5x the false alarm rate through proxies." |
-| "I'd deploy it with an API." | "One shared feature module for training and serving to avoid skew, plus drift and precision monitoring." |
+| "I'd deploy it with an API." | "It's live: FastAPI in Docker next to its database, ~90 ms server-side, with a parity test proving its features equal training's." |
+| "The model works for all inputs." | "Stress-testing showed two blind spots (new cards, amounts above the training range); I added guardrails that send them to review, and checked the review volume fits analyst capacity." |
+| "I stored the card history in the database." | "Full history took 411 MB and 1.3 s per lookup; I switched to running totals per card (9 MB, one query) and proved the features identical on 2,000 transactions." |
+| "I hashed the card numbers." | "HMAC with a secret, not plain SHA-256: the card number space is small enough to brute-force a plain hash." |
+| "My refactor is correct." | "The pipeline's feature files are identical to the notebook's on 1.85M rows, and two training runs give the same model file." |
 
 ---
 
@@ -74,6 +78,14 @@ Learn the **idea** of each one, not the exact words.
 8. "Validation chose the stopping point and the cutoff, so its score is optimistic. **Test is my headline.**"
 9. "The slow part in production is the **feature lookup**, not the model."
 10. "The pipeline's first test is to **reproduce the notebook's validation score**. If it doesn't, there's a bug."
+
+**Five more, for the production phase:**
+
+11. "**Training-serving skew fails silently**, so I don't trust shared code alone: a **parity test** proves it."
+12. "The model says 'I don't know' more often than it says 'fraud'. **Guardrails turn 'I don't know' into a human review.**"
+13. "I measured before optimising: **256 ms per round trip** was the real cost, not the queries. So I cut round trips and put the API **next to the database**."
+14. "**Test that the app can start, not just that it imports.** That's the lesson from my first failed deploy."
+15. "A secret baked into an image is a published secret. **Secrets arrive at run time; only names live in git.**"
 
 ---
 
@@ -152,6 +164,7 @@ Asking good questions shows you think like a team member:
 | 4 | File 02, sections F–I. Same method. |
 | 5 | File 02, sections J–M. Same method. |
 | 6 | Draw the **whiteboard diagram** from memory. Explain the notebooks while scrolling through them. |
+| 6b | Files **04 and 05**: the pipeline and the live API. Open the live `/docs` page and **demo a prediction** while explaining each step (the strongest thing you can show). |
 | 7 | **Mock interview:** someone asks random questions and cross-questions. Note every hesitation and revise those parts. |
 
 **The self-test:** pick any cell in any notebook and explain **what it does, why it's there, and what would go wrong without it**. If you can do that for every cell, you're ready.
