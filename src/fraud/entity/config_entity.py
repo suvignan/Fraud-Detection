@@ -48,6 +48,7 @@ class ModelTrainerConfig:
     model_params: dict           # the whole `model:` section of params.yaml
     model_path: Path
     feature_spec_path: Path
+    guardrails_path: Path        # where the rule limits (from train) are saved
     target: str
 
 

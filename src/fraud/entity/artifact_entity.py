@@ -46,6 +46,7 @@ class ModelTrainerArtifact:
     model_path: Path
     best_iteration: int
     scale_pos_weight: float
+    guardrails_path: Path
 
 
 @dataclass(frozen=True)

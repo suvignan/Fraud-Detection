@@ -8,8 +8,9 @@ from fraud.entity.artifact_entity import DataSplitArtifact, ModelTrainerArtifact
 from fraud.entity.config_entity import ModelTrainerConfig
 from fraud.exception import FraudException
 from fraud.features.build_features import make_model_input
+from fraud.guardrails import compute_limits
 from fraud.logger import get_logger
-from fraud.utils.common import load_json, read_yaml
+from fraud.utils.common import load_json, read_yaml, save_json
 
 logger = get_logger(__name__)
 
@@ -48,10 +49,14 @@ class ModelTrainer:
             model.save_model(self.config.model_path)
             logger.info("Trees kept: %d (best_iteration %d)", model.best_iteration + 1, model.best_iteration)
 
+            # Guardrail limits = the range of amounts the model was TRAINED on (train split only)
+            save_json(self.config.guardrails_path, compute_limits(train_df["amt"]))
+
             return ModelTrainerArtifact(
                 model_path=self.config.model_path,
                 best_iteration=int(model.best_iteration),
                 scale_pos_weight=scale_pos_weight,
+                guardrails_path=self.config.guardrails_path,
             )
         except Exception as e:
             logger.exception("Model training failed")
@@ -73,6 +78,7 @@ if __name__ == "__main__":
         model_params=params["model"],
         model_path=Path(params["artifacts"]["model"]),
         feature_spec_path=Path(params["artifacts"]["feature_spec"]),
+        guardrails_path=Path(params["artifacts"]["guardrails"]),
         target=data["target"],
     )
     print(ModelTrainer(split_artifact, config).initiate_model_training())

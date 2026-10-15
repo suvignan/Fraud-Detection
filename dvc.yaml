@@ -84,15 +84,18 @@ stages:
       - models/feature_spec.json
       - src/fraud/components/model_trainer.py
       - src/fraud/features/build_features.py    # make_model_input
+      - src/fraud/guardrails.py                 # compute_limits
     params:
       - model                                   # the whole section: any XGBoost setting change retrains
       - artifacts.model
       - artifacts.feature_spec
+      - artifacts.guardrails
       - data.target
       - data.train
       - data.val
     outs:
       - models/model.json
+      - models/guardrails.json                  # rule limits from the train split
 
   evaluate:
     cmd: python -m fraud.components.model_evaluation
@@ -101,8 +104,10 @@ stages:
       - data/processed/test.parquet
       - models/model.json
       - models/feature_spec.json
+      - models/guardrails.json
       - src/fraud/components/model_evaluation.py
       - src/fraud/features/build_features.py    # make_model_input
+      - src/fraud/guardrails.py                 # check_guardrails (review counts)
     params:
       - evaluation.cutoff
       - evaluation.alert_cost
@@ -110,6 +115,7 @@ stages:
       - artifacts.model
       - artifacts.metrics
       - artifacts.feature_spec
+      - artifacts.guardrails
       - data.target
       - data.val
       - data.test

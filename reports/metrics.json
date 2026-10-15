@@ -12,7 +12,10 @@
     "false_alarms": 312,
     "recall_pct": 90.4,
     "precision_pct": 78.4,
-    "total_cost": 44406
+    "total_cost": 44406,
+    "reviews": 1,
+    "reviews_per_month": 0.3,
+    "frauds_in_reviews": 1
   },
   "test": {
     "rows": 555719,
@@ -25,6 +28,9 @@
     "false_alarms": 698,
     "recall_pct": 87.6,
     "precision_pct": 72.9,
-    "total_cost": 85477
+    "total_cost": 85477,
+    "reviews": 0,
+    "reviews_per_month": 0.0,
+    "frauds_in_reviews": 0
   }
 }

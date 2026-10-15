@@ -9,6 +9,7 @@ from fraud.entity.artifact_entity import DataSplitArtifact, ModelEvaluationArtif
 from fraud.entity.config_entity import ModelEvaluationConfig
 from fraud.exception import FraudException
 from fraud.features.build_features import make_model_input
+from fraud.guardrails import check_guardrails
 from fraud.logger import get_logger
 from fraud.utils.common import load_json, read_yaml, save_json
 
@@ -28,7 +29,7 @@ class ModelEvaluation:
         self.trainer_artifact = trainer_artifact
         self.config = config
 
-    def _score(self, model: XGBClassifier, df: pd.DataFrame, spec: dict) -> dict:
+    def _score(self, model: XGBClassifier, df: pd.DataFrame, spec: dict, limits: dict) -> dict:
         """Every number for ONE set: ranking quality, and what happens at the cutoff."""
         X = make_model_input(df, spec)
         y = df[self.config.target]
@@ -44,6 +45,11 @@ class ModelEvaluation:
         frauds = int(fraud_mask.sum())
         total_cost = alerts * self.config.alert_cost + df.loc[missed_mask, "amt"].sum()
 
+        # Guardrails: transactions the model did NOT flag but a rule sends to human review (capacity check)
+        rules = [check_guardrails(a, new == 1, limits) for a, new in zip(df["amt"], df["is_first_txn"])]
+        reviewed = pd.Series([r is not None for r in rules], index=df.index) & ~pd.Series(flagged, index=df.index)
+        months = (df["trans_date_trans_time"].max() - df["trans_date_trans_time"].min()).days / 30.44
+
         return {
             "rows": len(df),
             "fraud_rate_pct": float(round(y.mean() * 100, 3)),
@@ -56,6 +62,9 @@ class ModelEvaluation:
             "recall_pct": float(round(caught / frauds * 100, 1)) if frauds else 0.0,
             "precision_pct": float(round(caught / alerts * 100, 1)) if alerts else 0.0,
             "total_cost": int(round(total_cost)),
+            "reviews": int(reviewed.sum()),
+            "reviews_per_month": float(round(reviewed.sum() / months, 1)),
+            "frauds_in_reviews": int((reviewed & fraud_mask).sum()),
         }
 
     def initiate_model_evaluation(self) -> ModelEvaluationArtifact:
@@ -70,8 +79,11 @@ class ModelEvaluation:
             val_df = pd.read_parquet(self.split_artifact.val_path)
             test_df = pd.read_parquet(self.split_artifact.test_path)
 
-            val_metrics = self._score(model, val_df, spec)
-            test_metrics = self._score(model, test_df, spec)
+            limits = load_json(self.trainer_artifact.guardrails_path)
+            val_metrics = self._score(model, val_df, spec, limits)
+            test_metrics = self._score(model, test_df, spec, limits)
+            logger.info("Guardrail reviews per month | val: %.1f | test: %.1f",
+                        val_metrics["reviews_per_month"], test_metrics["reviews_per_month"])
 
             report = {
                 "cutoff": self.config.cutoff,
@@ -120,6 +132,7 @@ if __name__ == "__main__":
         model_path=Path(artifacts["model"]),
         best_iteration=85,          # not used by evaluation
         scale_pos_weight=170.4,     # not used by evaluation
+        guardrails_path=Path(artifacts["guardrails"]),
     )
 
     # Every value comes from params.yaml, never typed here.

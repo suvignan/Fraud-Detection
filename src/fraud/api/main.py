@@ -4,6 +4,7 @@ Run from the project root:   uvicorn fraud.api.main:app --reload
 """
 import hashlib
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from fraud.api.history import FileHistoryStore, HistoryStore, NeonHistoryStore, 
 from fraud.api.reasons import reason_codes
 from fraud.api.schemas import PredictionResponse, TransactionRequest
 from fraud.features.build_features import add_time_features, card_features_from_totals, make_model_input
+from fraud.guardrails import check_guardrails, decide
 from fraud.logger import get_logger
 from fraud.utils.common import load_json, read_yaml
 
@@ -27,7 +29,9 @@ logger = get_logger(__name__)
 
 def build_model_input(txn: TransactionRequest, history: HistoryStore, window: str, spec: dict) -> pd.DataFrame:
     """The API's feature path: card running totals -> the 5 card features; shared recipes for the rest."""
+    started = time.perf_counter()
     state = history.get_card_state(txn.cc_num, txn.trans_date_trans_time)        # 1. what we know before now
+    logger.info("History lookup: %.1f ms", (time.perf_counter() - started) * 1000)  # measured ON the server
     row = pd.DataFrame([txn.model_dump()])                                        # 2. this transaction
     card_features = card_features_from_totals(                                    # 3. the 5 card features
         state.txn_count, state.amt_total, state.last_txn_time, state.recent_txn_times,
@@ -49,6 +53,7 @@ async def lifespan(app: FastAPI):
 
     app.state.model = model
     app.state.spec = load_json(params["artifacts"]["feature_spec"])
+    app.state.limits = load_json(params["artifacts"]["guardrails"])   # rule limits from the train split
     app.state.cutoff = params["evaluation"]["cutoff"]
     app.state.window = params["features"]["txn_window"]
     app.state.model_version = hashlib.md5(model_path.read_bytes()).hexdigest()[:12]
@@ -87,13 +92,19 @@ def predict(txn: TransactionRequest) -> PredictionResponse:
     """Score one transaction: features -> fraud score -> decision at the cutoff -> reasons."""
     X = build_model_input(txn, app.state.history, app.state.window, app.state.spec)
     score = float(app.state.model.predict_proba(X)[0, 1])          # 6. [row 0, fraud column]
-    decision = "flag" if score >= app.state.cutoff else "approve"
+    is_new_card = bool(X["is_first_txn"].iloc[0] == 1)
+    rule = check_guardrails(txn.amt, is_new_card, app.state.limits)  # inputs the model never learned
+    decision = decide(score, app.state.cutoff, rule)                 # flag > review > approve
+    reasons = reason_codes(app.state.model, X)
+    if decision == "review":
+        reasons = [rule[1]] + reasons[:2]                            # the rule is the main reason
     response = PredictionResponse(                                  # 7.
         fraud_score=round(score, 4),
         decision=decision,
         threshold=app.state.cutoff,
         model_version=app.state.model_version,
-        reason_codes=reason_codes(app.state.model, X),
+        reason_codes=reasons,
+        guardrail=rule[0] if decision == "review" else None,
     )
     if app.state.engine is not None:                                # Neon mode: log + remember this transaction
         record_prediction(app.state.engine, txn, X, response, app.state.window)
@@ -111,6 +122,6 @@ def record_prediction(
         session.add(PredictionLog(
             model_version=response.model_version, card_key=key, txn_time=txn.trans_date_trans_time,
             amt=txn.amt, category=txn.category, features=features,
-            score=response.fraud_score, decision=response.decision,
+            score=response.fraud_score, decision=response.decision, guardrail=response.guardrail,
         ))
         add_to_card_state(session, key, txn.trans_date_trans_time, txn.amt, window)

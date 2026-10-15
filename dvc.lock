@@ -193,15 +193,20 @@ stages:
       size: 487
     - path: src/fraud/components/model_trainer.py
       hash: md5
-      md5: e5ff98395363900056370d489733aa14
-      size: 3255
+      md5: 588670bc4e043c07ca1ce3d90d3d2ef6
+      size: 3625
     - path: src/fraud/features/build_features.py
       hash: md5
       md5: e87241d767577fba32ce12f41e4dd72b
       size: 3277
+    - path: src/fraud/guardrails.py
+      hash: md5
+      md5: fff39c60e2bd3f46a6ac340884465ec5
+      size: 1861
     params:
       params.yaml:
         artifacts.feature_spec: models/feature_spec.json
+        artifacts.guardrails: models/guardrails.json
         artifacts.model: models/model.json
         data.target: is_fraud
         data.train: data/processed/train.parquet
@@ -214,6 +219,10 @@ stages:
           eval_metric: aucpr
           random_state: 42
     outs:
+    - path: models/guardrails.json
+      hash: md5
+      md5: 5188b0e1e3e160cdb75d71c544905158
+      size: 74
     - path: models/model.json
       hash: md5
       md5: 72b46678548f99480c0e3fbc27b2ee26
@@ -233,21 +242,30 @@ stages:
       hash: md5
       md5: 4387d625a0a0ebb11f3ecee254545c95
       size: 487
+    - path: models/guardrails.json
+      hash: md5
+      md5: 5188b0e1e3e160cdb75d71c544905158
+      size: 74
     - path: models/model.json
       hash: md5
       md5: 72b46678548f99480c0e3fbc27b2ee26
       size: 854367
     - path: src/fraud/components/model_evaluation.py
       hash: md5
-      md5: e2b7c30866716d8c6c1e9f8d6e672b9d
-      size: 5666
+      md5: 2a05f8d21c9f81f1e4c495c7f1d732fd
+      size: 6672
     - path: src/fraud/features/build_features.py
       hash: md5
       md5: e87241d767577fba32ce12f41e4dd72b
       size: 3277
+    - path: src/fraud/guardrails.py
+      hash: md5
+      md5: fff39c60e2bd3f46a6ac340884465ec5
+      size: 1861
     params:
       params.yaml:
         artifacts.feature_spec: models/feature_spec.json
+        artifacts.guardrails: models/guardrails.json
         artifacts.metrics: reports/metrics.json
         artifacts.model: models/model.json
         data.target: is_fraud
@@ -259,5 +277,5 @@ stages:
     outs:
     - path: reports/metrics.json
       hash: md5
-      md5: 43adf245b91a4b19e987564d2c85be8a
-      size: 614
+      md5: b850631b86fe6e8a25a9560d4c11158a
+      size: 772

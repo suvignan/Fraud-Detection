@@ -41,7 +41,8 @@ class TransactionRequest(BaseModel):
 class PredictionResponse(BaseModel):
     """The model's verdict, with the reasons behind it."""
     fraud_score: float
-    decision: Literal["flag", "approve"]
+    decision: Literal["approve", "review", "flag"]   # review = a guardrail fired: the model can't judge this input
     threshold: float
     model_version: str
     reason_codes: list[str]
+    guardrail: str | None = None                     # which rule fired (None when no rule fired)

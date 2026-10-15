@@ -80,6 +80,7 @@ class TrainingPipeline:
             model_params=self.params["model"],
             model_path=Path(a["model"]),
             feature_spec_path=Path(a["feature_spec"]),
+            guardrails_path=Path(a["guardrails"]),
             target=self.params["data"]["target"],
         )
 
@@ -121,6 +122,7 @@ class TrainingPipeline:
         for path in [
             trainer.model_path,
             self.params["artifacts"]["feature_spec"],
+            trainer.guardrails_path,
             evaluation.metrics_path,
             self.params["validation"]["report"],
         ]:

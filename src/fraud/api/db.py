@@ -62,7 +62,7 @@ class RecentTransaction(Base):
 class PredictionLog(Base):
     """Every prediction the API makes: the audit trail, and the input for drift monitoring later."""
     __tablename__ = "prediction_log"
-    __table_args__ = (CheckConstraint("decision IN ('flag', 'approve')", name="decision_valid"),)
+    __table_args__ = (CheckConstraint("decision IN ('approve', 'review', 'flag')", name="decision_valid"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -74,6 +74,7 @@ class PredictionLog(Base):
     features: Mapped[dict] = mapped_column(JSONB)                 # the exact 9 model inputs, as JSON
     score: Mapped[float] = mapped_column(Double)
     decision: Mapped[str] = mapped_column(Text)
+    guardrail: Mapped[str | None] = mapped_column(Text)            # the rule that sent it to review, if any
     true_label: Mapped[int | None] = mapped_column(SmallInteger)  # "| None" = may be empty (filled later)
 
 

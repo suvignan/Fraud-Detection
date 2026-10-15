@@ -25,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements-api.txt
 
 # 5. Then the things that change more often: settings, the model (baked in), the code
 COPY params.yaml .
-COPY models/model.json models/feature_spec.json models/
+COPY models/model.json models/feature_spec.json models/guardrails.json models/
 COPY src/ src/
 
 # 6. Run as a normal user, not root: a break-in doesn't get admin rights inside the container
